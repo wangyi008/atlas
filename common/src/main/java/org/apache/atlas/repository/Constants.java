@@ -70,6 +70,7 @@ public final class Constants {
     public static final String RELATIONSHIPTYPE_END1_KEY                               = "endDef1";
     public static final String RELATIONSHIPTYPE_END2_KEY                               = "endDef2";
     public static final String RELATIONSHIPTYPE_CATEGORY_KEY                           = "relationshipCategory";
+    public static final String RELATIONSHIPTYPE_LABEL_KEY                              = "relationshipLabel";
     public static final String RELATIONSHIPTYPE_TAG_PROPAGATION_KEY                    = encodePropertyKey("tagPropagation");
     public static final String RELATIONSHIPTYPE_BLOCKED_PROPAGATED_CLASSIFICATIONS_KEY = encodePropertyKey("blockedPropagatedClassifications");
 
@@ -83,6 +84,15 @@ public final class Constants {
     public static final String STATE_PROPERTY_KEY   = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "state");
     public static final String CREATED_BY_KEY       = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "createdBy");
     public static final String MODIFIED_BY_KEY      = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "modifiedBy");
+
+    /**
+     * Patch vertices property keys.
+     */
+    public static final String PATCH_ID_PROPERTY_KEY          = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "patch.id");
+    public static final String PATCH_DESCRIPTION_PROPERTY_KEY = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "patch.description");
+    public static final String PATCH_TYPE_PROPERTY_KEY        = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "patch.type");
+    public static final String PATCH_ACTION_PROPERTY_KEY      = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "patch.action");
+    public static final String PATCH_STATE_PROPERTY_KEY       = encodePropertyKey(INTERNAL_PROPERTY_KEY_PREFIX + "patch.state");
 
     /**
      * The homeId field is used when saving into Atlas a copy of an object that is being imported from another

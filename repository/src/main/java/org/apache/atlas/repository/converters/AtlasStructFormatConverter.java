@@ -23,6 +23,7 @@ import org.apache.atlas.model.TypeCategory;
 import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasObjectId;
 import org.apache.atlas.model.instance.AtlasStruct;
+import org.apache.atlas.utils.AtlasEntityUtil;
 import org.apache.atlas.v1.model.instance.Struct;
 import org.apache.atlas.type.*;
 import org.apache.atlas.type.AtlasBuiltInTypes.AtlasObjectIdType;
@@ -41,7 +42,8 @@ import java.util.Map;
 public class AtlasStructFormatConverter extends AtlasAbstractFormatConverter {
     private static final Logger LOG = LoggerFactory.getLogger(AtlasStructFormatConverter.class);
 
-    public static final String ATTRIBUTES_PROPERTY_KEY = "attributes";
+    public static final String ATTRIBUTES_PROPERTY_KEY              = "attributes";
+    public static final String RELATIONSHIP_ATTRIBUTES_PROPERTY_KEY = "relationshipAttributes";
 
     public AtlasStructFormatConverter(AtlasFormatConverters registry, AtlasTypeRegistry typeRegistry) {
         this(registry, typeRegistry, TypeCategory.STRUCT);
@@ -133,16 +135,22 @@ public class AtlasStructFormatConverter extends AtlasAbstractFormatConverter {
 
             // Only process the requested/set attributes
             for (String attrName : attributes.keySet()) {
-                AtlasAttribute attr = structType.getAttribute(attrName);
+                Object         v2Value = attributes.get(attrName);
+                AtlasAttribute attr    = structType.getAttribute(attrName);
 
                 if (attr == null) {
-                    LOG.warn("ignored unknown attribute {}.{}", structType.getTypeName(), attrName);
-                    continue;
+                    if (isEntityType) {
+                        attr = ((AtlasEntityType) structType).getRelationshipAttribute(attrName, AtlasEntityUtil.getRelationshipType(v2Value));
+                    }
+
+                    if (attr == null) {
+                        LOG.warn("ignored unknown attribute {}.{}", structType.getTypeName(), attrName);
+                        continue;
+                    }
                 }
 
                 AtlasType            attrType      = attr.getAttributeType();
                 AtlasFormatConverter attrConverter = converterRegistry.getConverter(attrType.getTypeCategory());
-                Object               v2Value       = attributes.get(attr.getName());
 
                 if (v2Value != null && isEntityType && attr.isOwnedRef()) {
                     if (LOG.isDebugEnabled()) {
@@ -240,7 +248,8 @@ public class AtlasStructFormatConverter extends AtlasAbstractFormatConverter {
     }
 
     protected Map<String, Object> fromV1ToV2(AtlasStructType structType, Map attributes, ConverterContext context) throws AtlasBaseException {
-        Map<String, Object> ret = null;
+        Map<String, Object> ret        = null;
+        AtlasEntityType     entityType = (structType instanceof AtlasEntityType) ? ((AtlasEntityType) structType) : null;
 
         if (MapUtils.isNotEmpty(attributes)) {
             ret = new HashMap<>();
@@ -248,16 +257,22 @@ public class AtlasStructFormatConverter extends AtlasAbstractFormatConverter {
             // Only process the requested/set attributes
             for (Object attribKey : attributes.keySet()) {
                 String         attrName = attribKey.toString();
+                Object         v1Value  = attributes.get(attrName);
                 AtlasAttribute attr     = structType.getAttribute(attrName);
 
                 if (attr == null) {
-                    LOG.warn("ignored unknown attribute {}.{}", structType.getTypeName(), attrName);
-                    continue;
+                    if (entityType != null) {
+                        attr = entityType.getRelationshipAttribute(attrName, null);
+                    }
+
+                    if (attr == null) {
+                        LOG.warn("ignored unknown attribute {}.{}", structType.getTypeName(), attrName);
+                        continue;
+                    }
                 }
 
                 AtlasType            attrType      = attr.getAttributeType();
                 AtlasFormatConverter attrConverter = converterRegistry.getConverter(attrType.getTypeCategory());
-                Object               v1Value       = attributes.get(attrName);
 
                 if (attrConverter.isValidValueV1(v1Value, attrType)) {
                     Object v2Value = attrConverter.fromV1ToV2(v1Value, attrType, context);

@@ -6,9 +6,9 @@
         {
             "name": "rdbms_instance",
             "description": "Instance that the rdbms server is running on",
-            "superTypes": ["DataSet", "Asset"],
+            "superTypes": ["DataSet"],
             "serviceType": "rdbms",
-            "typeVersion": "1.0",
+            "typeVersion": "1.1",
             "attributeDefs": [
                 {
                     "name": "rdbms_type",
@@ -21,7 +21,7 @@
                 {
                     "name": "platform",
                     "typeName": "string",
-                    "isOptional": false,
+                    "isOptional": true,
                     "cardinality": "SINGLE",
                     "isUnique": false,
                     "isIndexable": true
@@ -92,14 +92,14 @@
         {
             "name": "rdbms_db",
             "description": "a database (schema) in an rdbms",
-            "superTypes": ["DataSet", "Asset"],
+            "superTypes": ["DataSet"],
             "serviceType": "rdbms",
-            "typeVersion": "1.0",
+            "typeVersion": "1.1",
             "attributeDefs": [
                 {
                     "name": "prodOrOther",
                     "typeName": "string",
-                    "isOptional": false,
+                    "isOptional": true,
                     "cardinality": "SINGLE",
                     "isUnique": false,
                     "isIndexable": true
@@ -146,9 +146,12 @@
         {
             "name": "rdbms_table",
             "description": "a table in an rdbms database (schema)",
-            "superTypes": ["DataSet", "Asset"],
+            "superTypes": ["DataSet"],
             "serviceType": "rdbms",
-            "typeVersion": "1.0",
+            "typeVersion": "1.2",
+            "options": {
+              "schemaElementsAttribute": "columns"
+            },
             "attributeDefs": [
                 {
                     "name": "db",
@@ -252,14 +255,17 @@
         {
             "name": "rdbms_column",
             "description": "a column in an rdbms table",
-            "superTypes": ["DataSet", "Asset"],
+            "superTypes": ["DataSet"],
             "serviceType": "rdbms",
-            "typeVersion": "1.0",
+            "typeVersion": "1.2",
+            "options": {
+              "schemaAttributes": "[\"name\", \"description\", \"owner\", \"data_type\", \"comment\", \" isPrimaryKey\", \" isNullable\"]"
+            },
             "attributeDefs": [
                 {
                     "name": "data_type",
                     "typeName": "string",
-                    "isOptional": false,
+                    "isOptional": true,
                     "cardinality": "SINGLE",
                     "isUnique": false,
                     "isIndexable": true
@@ -325,9 +331,9 @@
         {
             "name": "rdbms_index",
             "description": "An index on an RDBMS table",
-            "superTypes": ["DataSet", "Asset"],
+            "superTypes": ["DataSet"],
             "serviceType": "rdbms",
-            "typeVersion": "1.0",
+            "typeVersion": "1.1",
             "attributeDefs": [
                 {
                     "name": "table",
@@ -382,9 +388,9 @@
         {
             "name": "rdbms_foreign_key",
             "description": null,
-            "superTypes": ["DataSet", "Asset"],
+            "superTypes": ["DataSet"],
             "serviceType": "rdbms",
-            "typeVersion": "1.0",
+            "typeVersion": "1.1",
             "attributeDefs": [
                 {
                     "name": "table",

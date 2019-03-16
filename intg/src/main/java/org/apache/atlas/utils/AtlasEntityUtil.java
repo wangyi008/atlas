@@ -18,11 +18,8 @@
 package org.apache.atlas.utils;
 
 
-import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasObjectId;
-import org.apache.atlas.type.AtlasEntityType;
-import org.apache.atlas.type.AtlasType;
-import org.apache.atlas.type.AtlasStructType.AtlasAttribute;
+import org.apache.atlas.model.instance.AtlasRelatedObjectId;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang.StringUtils;
@@ -30,6 +27,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -123,4 +121,49 @@ public class AtlasEntityUtil {
 
         return ret;
     }
+
+    public static String getRelationshipType(Object val) {
+        final String ret;
+
+        if (val instanceof AtlasRelatedObjectId) {
+            ret = ((AtlasRelatedObjectId) val).getRelationshipType();
+        } else if (val instanceof Collection) {
+            String elemRelationshipType = null;
+
+            for (Object elem : (Collection) val) {
+                elemRelationshipType = getRelationshipType(elem);
+
+                if (elemRelationshipType != null) {
+                    break;
+                }
+            }
+
+            ret = elemRelationshipType;
+        } else if (val instanceof Map) {
+            Map mapValue = (Map) val;
+
+            if (mapValue.containsKey(AtlasRelatedObjectId.KEY_RELATIONSHIP_TYPE)) {
+                Object relTypeName = ((Map) val).get(AtlasRelatedObjectId.KEY_RELATIONSHIP_TYPE);
+
+                ret = relTypeName != null ? relTypeName.toString() : null;
+            } else {
+                String entryRelationshipType = null;
+
+                for (Object entryVal : mapValue.values()) {
+                    entryRelationshipType = getRelationshipType(entryVal);
+
+                    if (entryRelationshipType != null) {
+                        break;
+                    }
+                }
+
+                ret = entryRelationshipType;
+            }
+        } else {
+            ret = null;
+        }
+
+        return ret;
+    }
+
 }

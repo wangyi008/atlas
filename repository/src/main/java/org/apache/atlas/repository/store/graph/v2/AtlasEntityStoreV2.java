@@ -26,6 +26,7 @@ import org.apache.atlas.authorize.AtlasEntityAccessRequest;
 import org.apache.atlas.authorize.AtlasPrivilege;
 import org.apache.atlas.authorize.AtlasAuthorizationUtils;
 import org.apache.atlas.exception.AtlasBaseException;
+import org.apache.atlas.model.TypeCategory;
 import org.apache.atlas.model.instance.*;
 import org.apache.atlas.model.instance.AtlasEntity.AtlasEntitiesWithExtInfo;
 import org.apache.atlas.model.instance.AtlasEntity.AtlasEntityWithExtInfo;
@@ -41,6 +42,7 @@ import org.apache.atlas.type.AtlasStructType.AtlasAttribute;
 import org.apache.atlas.type.AtlasType;
 import org.apache.atlas.type.AtlasTypeRegistry;
 import org.apache.atlas.type.AtlasTypeUtil;
+import org.apache.atlas.utils.AtlasEntityUtil;
 import org.apache.atlas.utils.AtlasPerfMetrics.MetricRecorder;
 import org.apache.atlas.utils.AtlasPerfTracer;
 import org.apache.commons.collections.CollectionUtils;
@@ -321,7 +323,11 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
         AtlasAttribute    attr       = entityType.getAttribute(attrName);
 
         if (attr == null) {
-            throw new AtlasBaseException(AtlasErrorCode.UNKNOWN_ATTRIBUTE, attrName, entity.getTypeName());
+            attr = entityType.getRelationshipAttribute(attrName, AtlasEntityUtil.getRelationshipType(attrValue));
+
+            if (attr == null) {
+                throw new AtlasBaseException(AtlasErrorCode.UNKNOWN_ATTRIBUTE, attrName, entity.getTypeName());
+            }
         }
 
         AtlasType   attrType     = attr.getAttributeType();
@@ -734,15 +740,11 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
                     AtlasEntityType entityType = typeRegistry.getEntityTypeByName(entity.getTypeName());
                     boolean         hasUpdates = false;
 
-                    if (MapUtils.isNotEmpty(entity.getRelationshipAttributes())) {
-                        hasUpdates = true; // if relationship attributes are provided, assume there is an update
-                    }
-
                     if (!hasUpdates) {
                         hasUpdates = entity.getStatus() == AtlasEntity.Status.DELETED; // entity status could be updated during import
                     }
 
-                    if (!hasUpdates) {
+                    if (!hasUpdates && MapUtils.isNotEmpty(entity.getAttributes())) { // check for attribute value change
                         for (AtlasAttribute attribute : entityType.getAllAttributes().values()) {
                             if (!entity.getAttributes().containsKey(attribute.getName())) {  // if value is not provided, current value will not be updated
                                 continue;
@@ -756,6 +758,29 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
 
                                 if (LOG.isDebugEnabled()) {
                                     LOG.debug("found attribute update: entity(guid={}, typeName={}), attrName={}, currValue={}, newValue={}", guid, entity.getTypeName(), attribute.getName(), currVal, newVal);
+                                }
+
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!hasUpdates && MapUtils.isNotEmpty(entity.getRelationshipAttributes())) { // check of relationsship-attribute value change
+                        for (String attributeName : entityType.getRelationshipAttributes().keySet()) {
+                            if (!entity.getRelationshipAttributes().containsKey(attributeName)) {  // if value is not provided, current value will not be updated
+                                continue;
+                            }
+
+                            Object         newVal           = entity.getRelationshipAttribute(attributeName);
+                            String         relationshipType = AtlasEntityUtil.getRelationshipType(newVal);
+                            AtlasAttribute attribute        = entityType.getRelationshipAttribute(attributeName, relationshipType);
+                            Object         currVal          = entityRetriever.getEntityAttribute(vertex, attribute);
+
+                            if (!attribute.getAttributeType().areEqualValues(currVal, newVal, context.getGuidAssignments())) {
+                                hasUpdates = true;
+
+                                if (LOG.isDebugEnabled()) {
+                                    LOG.debug("found relationship attribute update: entity(guid={}, typeName={}), attrName={}, currValue={}, newValue={}", guid, entity.getTypeName(), attribute.getName(), currVal, newVal);
                                 }
 
                                 break;
@@ -782,7 +807,9 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
                             entitiesToSkipUpdate = new ArrayList<>();
                         }
 
-                        LOG.info("skipping unchanged entity: {}", entity);
+                        if (LOG.isDebugEnabled()) {
+                            LOG.debug("skipping unchanged entity: {}", entity);
+                        }
 
                         entitiesToSkipUpdate.add(entity);
                     }
@@ -834,6 +861,14 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
             AtlasEntity entity = entityStream.getByGuid(guid);
 
             if (entity != null) { // entity would be null if guid is not in the stream but referenced by an entity in the stream
+                AtlasEntityType entityType = typeRegistry.getEntityTypeByName(entity.getTypeName());
+
+                if (entityType == null) {
+                    throw new AtlasBaseException(AtlasErrorCode.TYPE_NAME_INVALID, TypeCategory.ENTITY.name(), entity.getTypeName());
+                }
+
+                compactAttributes(entity, entityType);
+
                 AtlasVertex vertex = getResolvedEntityVertex(discoveryContext, entity);
 
                 if (vertex != null) {
@@ -843,8 +878,7 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
                         graphDiscoverer.validateAndNormalizeForUpdate(entity);
                     }
 
-                    AtlasEntityType entityType = typeRegistry.getEntityTypeByName(entity.getTypeName());
-                    String          guidVertex = AtlasGraphUtilsV2.getIdFromVertex(vertex);
+                    String guidVertex = AtlasGraphUtilsV2.getIdFromVertex(vertex);
 
                     if (!StringUtils.equals(guidVertex, guid)) { // if entity was found by unique attribute
                         entity.setGuid(guidVertex);
@@ -855,8 +889,6 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
                     context.addUpdated(guid, entity, entityType, vertex);
                 } else {
                     graphDiscoverer.validateAndNormalize(entity);
-
-                    AtlasEntityType entityType = typeRegistry.getEntityTypeByName(entity.getTypeName());
 
                     //Create vertices which do not exist in the repository
                     if (RequestContext.get().isImportInProgress() && AtlasTypeUtil.isAssignedGuid(entity.getGuid())) {
@@ -1016,5 +1048,33 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
         }
 
         return ret;
+    }
+
+    // move/remove relationship-attributes present in 'attributes'
+    private void compactAttributes(AtlasEntity entity, AtlasEntityType entityType) {
+        if (entity != null) {
+            for (String attrName : entityType.getRelationshipAttributes().keySet()) {
+                if (entity.hasAttribute(attrName)) { // relationship attribute is present in 'attributes'
+                    Object attrValue = entity.removeAttribute(attrName);
+
+                    if (attrValue != null) {
+                        // if the attribute doesn't exist in relationshipAttributes, add it
+                        Object relationshipAttrValue = entity.getRelationshipAttribute(attrName);
+
+                        if (relationshipAttrValue == null) {
+                            entity.setRelationshipAttribute(attrName, attrValue);
+
+                            if (LOG.isDebugEnabled()) {
+                                LOG.debug("moved attribute {}.{} from attributes to relationshipAttributes", entityType.getTypeName(), attrName);
+                            }
+                        } else {
+                            if (LOG.isDebugEnabled()) {
+                                LOG.debug("attribute {}.{} is present in attributes and relationshipAttributes. Removed from attributes", entityType.getTypeName(), attrName);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

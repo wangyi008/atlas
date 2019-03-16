@@ -55,6 +55,8 @@ public class RequestContext {
     private int         maxAttempts  = 1;
     private int         attemptCount = 1;
     private boolean     isImportInProgress = false;
+    private boolean     isInNotificationProcessing = false;
+    private boolean     isInTypePatching           = false;
 
 
     private RequestContext() {
@@ -163,6 +165,23 @@ public class RequestContext {
     public void setImportInProgress(boolean importInProgress) {
         isImportInProgress = importInProgress;
     }
+
+    public boolean isInNotificationProcessing() {
+        return isInNotificationProcessing;
+    }
+
+    public void setInNotificationProcessing(boolean inNotificationProcessing) {
+        isInNotificationProcessing = inNotificationProcessing;
+    }
+
+    public boolean isInTypePatching() {
+        return isInTypePatching;
+    }
+
+    public void setInTypePatching(boolean inTypePatching) {
+        isInTypePatching = inTypePatching;
+    }
+
 
     public void recordEntityUpdate(AtlasEntityHeader entity) {
         if (entity != null && entity.getGuid() != null) {

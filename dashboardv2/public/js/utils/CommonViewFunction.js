@@ -73,12 +73,25 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
     };
     CommonViewFunction.propertyTable = function(options) {
         var scope = options.scope,
+            sortBy = options.sortBy,
             valueObject = options.valueObject,
             extractJSON = options.extractJSON,
             isTable = _.isUndefined(options.isTable) ? true : options.isTable,
-            attributeDefs = options.attributeDefs;
+            attributeDefs = options.attributeDefs,
+            numberFormat = options.numberFormat;
 
         var table = "",
+            getValue = function(val) {
+                if (val && numberFormat) {
+                    if (_.isNumber(val)) {
+                        return numberFormat(val);
+                    } else if (!_.isNaN(parseInt(val))) {
+                        return numberFormat(val);
+                    }
+                } else {
+                    return val || "N/A";
+                }
+            },
             fetchInputOutputValue = function(id, defEntity) {
                 var that = this;
                 scope.entityModel.getEntityHeader(id, {
@@ -95,7 +108,7 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                             id = data.guid;
                         }
                         if (value.length > 0) {
-                            scope.$('td div[data-id="' + id + '"]').html('<a href="#!/detailPage/' + id + '">' + value + '</a>');
+                            scope.$('td div[data-id="' + id + '"]').html('<a href="#!/detailPage/' + id + '">' + getValue(value) + '</a>');
                         } else {
                             scope.$('td div[data-id="' + id + '"]').html('<a href="#!/detailPage/' + id + '">' + _.escape(id) + '</a>');
                         }
@@ -137,7 +150,7 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                     if (_.isString(inputOutputField) || _.isBoolean(inputOutputField) || _.isNumber(inputOutputField)) {
                         var tempVarfor$check = inputOutputField.toString();
                         if (tempVarfor$check.indexOf("$") == -1) {
-                            valueOfArray.push('<span class="json-string">' + _.escape(inputOutputField) + '</span>');
+                            valueOfArray.push('<span class="json-string">' + getValue(_.escape(inputOutputField)) + '</span>');
                         }
                     } else if (_.isObject(inputOutputField) && !id) {
                         var attributesList = inputOutputField;
@@ -203,12 +216,18 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                 }
                 return subLink;
             }
-        _.sortBy(_.keys(valueObject)).map(function(key) {
+        var valueObjectKeysList = _.keys(valueObject);
+        if (_.isUndefined(sortBy) || sortBy == true) {
+            valueObjectKeysList = _.sortBy(valueObjectKeysList);
+        }
+        valueObjectKeysList.map(function(key) {
+
             key = _.escape(key);
             if (key == "profileData") {
                 return;
             }
             var keyValue = valueObject[key];
+            var count = _.isArray(keyValue) ? (keyValue.length) : 0;
             var defEntity = _.find(attributeDefs, { name: key });
             if (defEntity && defEntity.typeName) {
                 var defEntityType = defEntity.typeName.toLocaleLowerCase();
@@ -233,19 +252,20 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                 val = _.escape(keyValue);
             }
             if (isTable) {
-                var htmlTag = '<div class="scroll-y">' + val + '</div>';
-                if (_.isObject(valueObject[key])) {
+                var htmlTag = '<div class="scroll-y">' + getValue(val) + '</div>';
+                if (_.isObject(valueObject[key]) && !_.isEmpty(valueObject[key])) {
                     var matchedLinkString = val.match(/href|value-loader\w*/g),
                         matchedJson = val.match(/json-value|json-string\w*/g),
-                        isMatchLinkStringIsSingle = matchedLinkString && matchedLinkString.length == 1,
+                        isMatchLinkStringIsSingle = matchedLinkString && matchedLinkString.length <= 5,
                         isMatchJSONStringIsSingle = matchedJson && matchedJson.length == 1,
                         expandCollapseButton = "";
                     if ((matchedJson && !isMatchJSONStringIsSingle) || (matchedLinkString && !isMatchLinkStringIsSingle)) {
-                        var expandCollapseButton = '<button class="expand-collapse-button"><i class="fa"></i></button>'
+                        expandCollapseButton = '<button class="expand-collapse-button"><i class="fa"></i></button>';
+                        htmlTag = '<pre class="shrink code-block ' + (isMatchJSONStringIsSingle ? 'fixed-height' : '') + '">' + expandCollapseButton + '<code>' + val + '</code></pre>';
                     }
-                    var htmlTag = '<pre class="shrink code-block ' + (isMatchJSONStringIsSingle ? 'fixed-height' : '') + '">' + expandCollapseButton + '<code>' + val + '</code></pre>';
                 }
-                table += '<tr><td>' + _.escape(key) + '</td><td>' + htmlTag + '</td></tr>';
+                var textToDisplay = count > 0 ? ' (' + getValue(count) + ')' : '';
+                table += '<tr><td>' + _.escape(key) + textToDisplay + '</td><td>' + htmlTag + '</td></tr>';
             } else {
                 table += '<div>' + val + '</div>';
             }

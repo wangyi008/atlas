@@ -81,7 +81,6 @@ import static org.apache.atlas.model.TypeCategory.MAP;
 import static org.apache.atlas.model.TypeCategory.OBJECT_ID_TYPE;
 import static org.apache.atlas.model.instance.AtlasEntity.Status.ACTIVE;
 import static org.apache.atlas.model.instance.AtlasEntity.Status.DELETED;
-import static org.apache.atlas.repository.graph.GraphHelper.EDGE_LABEL_PREFIX;
 import static org.apache.atlas.util.AtlasGremlinQueryProvider.AtlasGremlinQuery.*;
 
 @Component
@@ -538,8 +537,8 @@ public class EntityDiscoveryService implements AtlasDiscoveryService {
         AtlasAttribute attribute = entityType.getAttribute(relation);
 
         if (attribute != null) {
-            if (isRelationshipAttribute(attribute)) {
-                relation = EDGE_LABEL_PREFIX + attribute.getQualifiedName();
+            if (attribute.isObjectRef()) {
+                relation = attribute.getRelationshipEdgeLabel();
             } else {
                 throw new AtlasBaseException(AtlasErrorCode.INVALID_RELATIONSHIP_ATTRIBUTE, relation, attribute.getTypeName());
             }
@@ -789,23 +788,6 @@ public class EntityDiscoveryService implements AtlasDiscoveryService {
         }
 
         return "";
-    }
-
-    private boolean isRelationshipAttribute(AtlasAttribute attribute) throws AtlasBaseException {
-        boolean   ret      = true;
-        AtlasType attrType = attribute.getAttributeType();
-
-        if (attrType.getTypeCategory() == ARRAY) {
-            attrType = ((AtlasArrayType) attrType).getElementType();
-        } else if (attrType.getTypeCategory() == MAP) {
-            attrType = ((AtlasMapType) attrType).getValueType();
-        }
-
-        if (attrType.getTypeCategory() != OBJECT_ID_TYPE) {
-            ret = false;
-        }
-
-        return ret;
     }
 
     private Set<String> getEntityStates() {

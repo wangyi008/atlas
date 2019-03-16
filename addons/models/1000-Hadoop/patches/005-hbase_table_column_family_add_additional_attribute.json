@@ -1,6 +1,8 @@
 {
   "patches": [
     {
+      "id": "TYPEDEF_PATCH_1000_039",
+      "description": "Add attributes to hbase_table",
       "action": "ADD_ATTRIBUTE",
       "typeName": "hbase_table",
       "applyToVersion": "1.2",
@@ -32,6 +34,14 @@
           "isUnique": false
         },
         {
+          "name": "isNormalizationEnabled",
+          "typeName": "boolean",
+          "cardinality": "SINGLE",
+          "isIndexable": false,
+          "isOptional": true,
+          "isUnique": false
+        },
+        {
           "name": "replicasPerRegion",
           "typeName": "int",
           "cardinality": "SINGLE",
@@ -51,6 +61,8 @@
       ]
     },
     {
+      "id": "TYPEDEF_PATCH_1000_040",
+      "description": "Add attributes to hbase_column_family",
       "action": "ADD_ATTRIBUTE",
       "typeName": "hbase_column_family",
       "applyToVersion": "1.1",
@@ -90,6 +102,14 @@
           "isUnique": false
         },
         {
+          "name": "inMemoryCompactionPolicy",
+          "typeName": "string",
+          "cardinality": "SINGLE",
+          "isIndexable": false,
+          "isOptional": true,
+          "isUnique": false
+        },
+        {
           "name": "keepDeletedCells",
           "typeName": "boolean",
           "cardinality": "SINGLE",
@@ -115,6 +135,14 @@
         },
         {
           "name": "dataBlockEncoding",
+          "typeName": "string",
+          "cardinality": "SINGLE",
+          "isIndexable": false,
+          "isOptional": true,
+          "isUnique": false
+        },
+        {
+          "name": "StoragePolicy",
           "typeName": "string",
           "cardinality": "SINGLE",
           "isIndexable": false,
@@ -172,6 +200,30 @@
         {
           "name": "prefetchBlocksOnOpen",
           "typeName": "boolean",
+          "cardinality": "SINGLE",
+          "isIndexable": false,
+          "isOptional": true,
+          "isUnique": false
+        },
+        {
+          "name": "newVersionBehavior",
+          "typeName": "boolean",
+          "cardinality": "SINGLE",
+          "isIndexable": false,
+          "isOptional": true,
+          "isUnique": false
+        },
+        {
+          "name": "isMobEnabled",
+          "typeName": "boolean",
+          "cardinality": "SINGLE",
+          "isIndexable": false,
+          "isOptional": true,
+          "isUnique": false
+        },
+        {
+          "name": "mobCompactPartitionPolicy",
+          "typeName": "string",
           "cardinality": "SINGLE",
           "isIndexable": false,
           "isOptional": true,

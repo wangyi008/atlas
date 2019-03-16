@@ -19,6 +19,7 @@ package org.apache.atlas.repository.store.graph.v2;
 
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.atlas.AtlasErrorCode;
+import org.apache.atlas.RequestContext;
 import org.apache.atlas.authorize.AtlasPrivilege;
 import org.apache.atlas.authorize.AtlasTypeAccessRequest;
 import org.apache.atlas.authorize.AtlasAuthorizationUtils;
@@ -28,15 +29,14 @@ import org.apache.atlas.model.typedef.AtlasStructDef.AtlasAttributeDef;
 import org.apache.atlas.model.typedef.AtlasStructDef.AtlasConstraintDef;
 import org.apache.atlas.v1.model.typedef.AttributeDefinition;
 import org.apache.atlas.repository.Constants;
-import org.apache.atlas.repository.graph.GraphHelper;
 import org.apache.atlas.repository.graphdb.AtlasVertex;
+import org.apache.atlas.type.AtlasRelationshipType;
 import org.apache.atlas.type.AtlasStructType;
 import org.apache.atlas.type.AtlasStructType.AtlasAttribute;
 import org.apache.atlas.type.AtlasType;
 import org.apache.atlas.type.AtlasTypeRegistry;
 import org.apache.atlas.type.AtlasTypeUtil;
 import org.apache.atlas.typesystem.types.DataTypes.TypeCategory;
-import org.apache.atlas.v1.model.typedef.Multiplicity;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
@@ -385,11 +385,33 @@ public class AtlasStructDefStoreV2 extends AtlasAbstractDefStoreV2<AtlasStructDe
 
         // delete attributes that are not present in updated structDef
         if (CollectionUtils.isNotEmpty(currAttrNames)) {
+            List<String> removedAttributes = null;
+
             for (String currAttrName : currAttrNames) {
                 if (!attrNames.contains(currAttrName)) {
-                    throw new AtlasBaseException(AtlasErrorCode.ATTRIBUTE_DELETION_NOT_SUPPORTED,
-                            structDef.getName(), currAttrName);
+                    if (RequestContext.get().isInTypePatching()) {
+                        String propertyKey = AtlasGraphUtilsV2.getTypeDefPropertyKey(structDef, currAttrName);
+
+                        AtlasGraphUtilsV2.setProperty(vertex, propertyKey, null);
+
+                        if (removedAttributes == null) {
+                            removedAttributes = new ArrayList<>();
+                        }
+
+                        removedAttributes.add(currAttrName);
+
+                        LOG.warn("REMOVED ATTRIBUTE: {}.{}", structDef.getName(), currAttrName);
+                    } else {
+                        throw new AtlasBaseException(AtlasErrorCode.ATTRIBUTE_DELETION_NOT_SUPPORTED,
+                                structDef.getName(), currAttrName);
+                    }
                 }
+            }
+
+            if (removedAttributes != null) {
+                currAttrNames.removeAll(removedAttributes);
+
+                vertex.setListProperty(encodedStructDefPropertyKey, currAttrNames);
             }
         }
 
@@ -402,6 +424,19 @@ public class AtlasStructDefStoreV2 extends AtlasAbstractDefStoreV2<AtlasStructDe
         if (CollectionUtils.isNotEmpty(structDef.getAttributeDefs())) {
             for (AtlasAttributeDef attributeDef : structDef.getAttributeDefs()) {
                 if (CollectionUtils.isEmpty(currAttrNames) || !currAttrNames.contains(attributeDef.getName())) {
+
+                    // this could have been an attribute removed by a REMOVE_LEGACY_REF_ATTRIBUTE patch
+                    // in such case, don't add this attribute; ignore and continue
+                    AtlasRelationshipType relationship = AtlasTypeUtil.findRelationshipWithLegacyRelationshipEnd(structDef.getName(), attributeDef.getName(), typeDefStore.getTypeRegistry());
+
+                    if (relationship != null) {
+                        attrNames.remove(attributeDef.getName());
+
+                        LOG.warn("Ignoring attempt to add legacy attribute {}.{}, which is already present in relationship {}", structDef.getName(), attributeDef.getName(), relationship.getTypeName());
+
+                        continue;
+                    }
+
                     // new attribute - only allow if optional
                     if (!attributeDef.getIsOptional()) {
                         throw new AtlasBaseException(AtlasErrorCode.CANNOT_ADD_MANDATORY_ATTRIBUTE, structDef.getName(), attributeDef.getName());
@@ -453,6 +488,12 @@ public class AtlasStructDefStoreV2 extends AtlasAbstractDefStoreV2<AtlasStructDe
                 String attrPropertyKey        = AtlasGraphUtilsV2.getTypeDefPropertyKey(ret, attrName);
                 String encodedAttrPropertyKey = AtlasGraphUtilsV2.encodePropertyKey(attrPropertyKey);
                 String attrJson               = vertex.getProperty(encodedAttrPropertyKey, String.class);
+
+                if (StringUtils.isEmpty(attrJson)) {
+                    LOG.warn("attribute not found {}.{}. Ignoring..", structDef.getName(), attrName);
+
+                    continue;
+                }
 
                 attributeDefs.add(toAttributeDefFromJson(structDef, AtlasType.fromJson(attrJson, Map.class), typeDefStore));
             }

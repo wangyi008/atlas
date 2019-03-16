@@ -24,6 +24,7 @@ import org.apache.atlas.model.instance.AtlasClassification;
 import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasEntity.Status;
 import org.apache.atlas.model.instance.AtlasObjectId;
+import org.apache.atlas.type.AtlasStructType;
 import org.apache.atlas.v1.model.instance.AtlasSystemAttributes;
 import org.apache.atlas.v1.model.instance.Id;
 import org.apache.atlas.v1.model.instance.Referenceable;
@@ -39,6 +40,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -142,8 +144,10 @@ public class AtlasEntityFormatConverter extends AtlasStructFormatConverter {
                     status = Status.ACTIVE;
                 }
 
+                final Map<String, Object> v2Attribs = entity.getAttributes();
+
                 Referenceable referenceable = new Referenceable(entity.getGuid(), entity.getTypeName(), status.name(),
-                                                                fromV2ToV1(entityType, entity.getAttributes(), context),
+                                                                fromV2ToV1(entityType, v2Attribs, context),
                                                                 new AtlasSystemAttributes(entity.getCreatedBy(), entity.getUpdatedBy(), entity.getCreateTime(), entity.getUpdateTime()));
 
                 if (CollectionUtils.isNotEmpty(entity.getClassifications())) {

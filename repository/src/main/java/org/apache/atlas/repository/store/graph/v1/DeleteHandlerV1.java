@@ -202,11 +202,7 @@ public abstract class DeleteHandlerV1 {
 
             vertexInfoMap.put(guid, new GraphHelper.VertexInfo(entity, vertex));
 
-            for (AtlasStructType.AtlasAttribute attributeInfo : entityType.getAllAttributes().values()) {
-                if (!attributeInfo.isOwnedRef()) {
-                    continue;
-                }
-
+            for (AtlasStructType.AtlasAttribute attributeInfo : entityType.getOwnedRefAttributes()) {
                 String       edgeLabel    = attributeInfo.getRelationshipEdgeLabel();
                 AtlasType    attrType     = attributeInfo.getAttributeType();
                 TypeCategory typeCategory = attrType.getTypeCategory();
@@ -694,7 +690,11 @@ public abstract class DeleteHandlerV1 {
                 AtlasEntityType                parentEntityType = (AtlasEntityType) parentType;
                 AtlasStructType.AtlasAttribute attribute        = parentEntityType.getAttribute(atlasEdgeLabel.getAttributeName());
 
-                if (attribute.getInverseRefAttribute() != null) {
+                if (attribute == null) {
+                    attribute = parentEntityType.getRelationshipAttribute(atlasEdgeLabel.getAttributeName(), AtlasGraphUtilsV2.getTypeName(edge));
+                }
+
+                if (attribute != null && attribute.getInverseRefAttribute() != null) {
                     deleteEdgeBetweenVertices(edge.getInVertex(), edge.getOutVertex(), attribute.getInverseRefAttribute());
                 }
             }

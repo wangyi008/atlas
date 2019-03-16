@@ -26,6 +26,7 @@ import org.apache.atlas.model.instance.AtlasStruct;
 import org.apache.atlas.model.typedef.AtlasEntityDef;
 import org.apache.atlas.model.typedef.AtlasStructDef.AtlasAttributeDef;
 import org.apache.atlas.type.AtlasBuiltInTypes.AtlasObjectIdType;
+import org.apache.atlas.utils.AtlasEntityUtil;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang.StringUtils;
@@ -66,8 +67,8 @@ public class AtlasEntityType extends AtlasStructType {
     private Set<String>                              allSubTypes                = Collections.emptySet();
     private Set<String>                              typeAndAllSubTypes         = Collections.emptySet();
     private Set<String>                              typeAndAllSuperTypes       = Collections.emptySet();
-    private Map<String, AtlasAttribute>              relationshipAttributes     = Collections.emptyMap();
-    private Map<String, List<AtlasRelationshipType>> relationshipAttributesType = Collections.emptyMap();
+    private Map<String, Map<String, AtlasAttribute>> relationshipAttributes     = Collections.emptyMap();
+    private List<AtlasAttribute>                     ownedRefAttributes         = Collections.emptyList();
     private String                                   typeAndAllSubTypesQryStr   = "";
     private boolean                                  isInternalType             = false;
     private Map<String, AtlasAttribute>              headerAttributes           = Collections.emptyMap();
@@ -114,15 +115,14 @@ public class AtlasEntityType extends AtlasStructType {
             }
         }
 
-        this.superTypes                 = Collections.unmodifiableList(s);
-        this.allSuperTypes              = Collections.unmodifiableSet(allS);
-        this.allAttributes              = Collections.unmodifiableMap(allA);
-        this.uniqAttributes             = getUniqueAttributes(this.allAttributes);
-        this.subTypes                   = new HashSet<>(); // this will be populated in resolveReferencesPhase2()
-        this.allSubTypes                = new HashSet<>(); // this will be populated in resolveReferencesPhase2()
-        this.typeAndAllSubTypes         = new HashSet<>(); // this will be populated in resolveReferencesPhase2()
-        this.relationshipAttributes     = new HashMap<>(); // this will be populated in resolveReferencesPhase3()
-        this.relationshipAttributesType = new HashMap<>(); // this will be populated in resolveReferencesPhase3()
+        this.superTypes             = Collections.unmodifiableList(s);
+        this.allSuperTypes          = Collections.unmodifiableSet(allS);
+        this.allAttributes          = Collections.unmodifiableMap(allA);
+        this.uniqAttributes         = getUniqueAttributes(this.allAttributes);
+        this.subTypes               = new HashSet<>(); // this will be populated in resolveReferencesPhase2()
+        this.allSubTypes            = new HashSet<>(); // this will be populated in resolveReferencesPhase2()
+        this.typeAndAllSubTypes     = new HashSet<>(); // this will be populated in resolveReferencesPhase2()
+        this.relationshipAttributes = new HashMap<>(); // this will be populated in resolveReferencesPhase3()
 
         this.typeAndAllSubTypes.add(this.getTypeName());
 
@@ -182,8 +182,7 @@ public class AtlasEntityType extends AtlasStructType {
 
             // validate if RelationshipDefs is defined for all entityDefs
             if (attributeEntityType != null && !hasRelationshipAttribute(attributeName)) {
-                LOG.warn("No RelationshipDef defined between {} and {} on attribute: {}.{}", getTypeName(),
-                         attributeEntityType.getTypeName(), getTypeName(), attributeName);
+                typeRegistry.reportMissingRelationshipDef(getTypeName(), attributeEntityType.getTypeName(), attributeName);
             }
         }
 
@@ -192,27 +191,54 @@ public class AtlasEntityType extends AtlasStructType {
                 isInternalType = true;
             }
 
-            AtlasEntityType superType = typeRegistry.getEntityTypeByName(superTypeName);
-
-            Map<String, AtlasAttribute> superTypeRelationshipAttributes = superType.getRelationshipAttributes();
+            AtlasEntityType                          superType                       = typeRegistry.getEntityTypeByName(superTypeName);
+            Map<String, Map<String, AtlasAttribute>> superTypeRelationshipAttributes = superType.getRelationshipAttributes();
 
             if (MapUtils.isNotEmpty(superTypeRelationshipAttributes)) {
-                relationshipAttributes.putAll(superTypeRelationshipAttributes);
-            }
+                for (String attrName : superTypeRelationshipAttributes.keySet()) {
+                    Map<String, AtlasAttribute> superTypeAttributes = superTypeRelationshipAttributes.get(attrName);
 
-            Map<String, List<AtlasRelationshipType>> superTypeRelationshipAttributesType = superType.getRelationshipAttributesType();
+                    if (MapUtils.isNotEmpty(superTypeAttributes)) {
+                        Map<String, AtlasAttribute> attributes = relationshipAttributes.get(attrName);
 
-            if (MapUtils.isNotEmpty(superTypeRelationshipAttributesType)) {
-                relationshipAttributesType.putAll(superTypeRelationshipAttributesType);
+                        if (attributes == null) {
+                            attributes = new HashMap<>();
+
+                            relationshipAttributes.put(attrName, attributes);
+                        }
+
+                        for (String relationshipType : superTypeAttributes.keySet()) {
+                            if (!attributes.containsKey(relationshipType)) {
+                                attributes.put(relationshipType, superTypeAttributes.get(relationshipType));
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        subTypes = Collections.unmodifiableSet(subTypes);
-        allSubTypes = Collections.unmodifiableSet(allSubTypes);
-        typeAndAllSubTypes = Collections.unmodifiableSet(typeAndAllSubTypes);
-        typeAndAllSubTypesQryStr = ""; // will be computed on next access
-        relationshipAttributes = Collections.unmodifiableMap(relationshipAttributes);
-        relationshipAttributesType = Collections.unmodifiableMap(relationshipAttributesType);
+        ownedRefAttributes = new ArrayList<>();
+
+        for (AtlasAttribute attribute : allAttributes.values()) {
+            if (attribute.isOwnedRef()) {
+                ownedRefAttributes.add(attribute);
+            }
+        }
+
+        for (Map<String, AtlasAttribute> attributes : relationshipAttributes.values()) {
+            for (AtlasAttribute attribute : attributes.values()) {
+                if (attribute.isOwnedRef()) {
+                    ownedRefAttributes.add(attribute);
+                }
+            }
+        }
+
+        subTypes                   = Collections.unmodifiableSet(subTypes);
+        allSubTypes                = Collections.unmodifiableSet(allSubTypes);
+        typeAndAllSubTypes         = Collections.unmodifiableSet(typeAndAllSubTypes);
+        typeAndAllSubTypesQryStr   = ""; // will be computed on next access
+        relationshipAttributes     = Collections.unmodifiableMap(relationshipAttributes);
+        ownedRefAttributes         = Collections.unmodifiableList(ownedRefAttributes);
 
         entityDef.setSubTypes(subTypes);
     }
@@ -269,37 +295,48 @@ public class AtlasEntityType extends AtlasStructType {
         return isInternalType;
     }
 
-    public Map<String, AtlasAttribute> getRelationshipAttributes() {
+    public Map<String, Map<String, AtlasAttribute>> getRelationshipAttributes() {
         return relationshipAttributes;
     }
 
-    public AtlasAttribute getRelationshipAttribute(String attributeName) {
-        return relationshipAttributes.get(attributeName);
+    public List<AtlasAttribute> getOwnedRefAttributes() {
+        return ownedRefAttributes;
     }
 
-    // this method should be called from AtlasRelationshipType.resolveReferencesPhase2()
-    void addRelationshipAttribute(String attributeName, AtlasAttribute attribute) {
-        relationshipAttributes.put(attributeName, attribute);
-    }
+    public AtlasAttribute getRelationshipAttribute(String attributeName, String relationshipType) {
+        final AtlasAttribute        ret;
+        Map<String, AtlasAttribute> attributes = relationshipAttributes.get(attributeName);
 
-    // this method should be called from AtlasRelationshipType.resolveReferencesPhase2()
-    void addRelationshipAttributeType(String attributeName, AtlasRelationshipType relationshipType) {
-        List<AtlasRelationshipType> relationshipTypes = relationshipAttributesType.get(attributeName);
-
-        if (relationshipTypes == null) {
-            relationshipTypes = new ArrayList<>();
-            relationshipAttributesType.put(attributeName, relationshipTypes);
+        if (MapUtils.isNotEmpty(attributes)) {
+            if (relationshipType != null && attributes.containsKey(relationshipType)) {
+                ret = attributes.get(relationshipType);
+            } else {
+                ret = attributes.values().iterator().next();
+            }
+        } else {
+            ret = null;
         }
 
-        relationshipTypes.add(relationshipType);
+        return ret;
     }
 
-    public List<AtlasRelationshipType> getRelationshipAttributeType(String attributeName) {
-        return relationshipAttributesType.get(attributeName);
+    // this method should be called from AtlasRelationshipType.resolveReferencesPhase2()
+    void addRelationshipAttribute(String attributeName, AtlasAttribute attribute, AtlasRelationshipType relationshipType) {
+        Map<String, AtlasAttribute> attributes = relationshipAttributes.get(attributeName);
+
+        if (attributes == null) {
+            attributes = new HashMap<>();
+
+            relationshipAttributes.put(attributeName, attributes);
+        }
+
+        attributes.put(relationshipType.getTypeName(), attribute);
     }
 
-    public Map<String, List<AtlasRelationshipType>> getRelationshipAttributesType() {
-        return relationshipAttributesType;
+    public Set<String> getAttributeRelationshipTypes(String attributeName) {
+        Map<String, AtlasAttribute> attributes = relationshipAttributes.get(attributeName);
+
+        return attributes != null ? attributes.keySet() : null;
     }
 
     public String getTypeAndAllSubTypesQryStr() {
@@ -314,6 +351,10 @@ public class AtlasEntityType extends AtlasStructType {
         return typeQryStr;
     }
 
+    public boolean hasAttribute(String attributeName) {
+        return allAttributes.containsKey(attributeName);
+    }
+
     public boolean hasRelationshipAttribute(String attributeName) {
         return relationshipAttributes.containsKey(attributeName);
     }
@@ -322,7 +363,7 @@ public class AtlasEntityType extends AtlasStructType {
         if (allAttributes.containsKey(attrName)) {
             return allAttributes.get(attrName).getQualifiedName();
         } else if (relationshipAttributes.containsKey(attrName)) {
-            return relationshipAttributes.get(attrName).getQualifiedName();
+            return relationshipAttributes.get(attrName).values().iterator().next().getQualifiedName();
         }
 
         throw new AtlasBaseException(AtlasErrorCode.UNKNOWN_ATTRIBUTE, attrName, entityDef.getName());
@@ -598,9 +639,11 @@ public class AtlasEntityType extends AtlasStructType {
             if (obj instanceof AtlasEntity) {
                 AtlasEntity entityObj = (AtlasEntity) obj;
 
-                for (AtlasAttribute attribute : relationshipAttributes.values()) {
-                    Object            attributeValue = entityObj.getRelationshipAttribute(attribute.getName());
-                    AtlasAttributeDef attributeDef   = attribute.getAttributeDef();
+                for (String attributeName : relationshipAttributes.keySet()) {
+                    Object            attributeValue   = entityObj.getRelationshipAttribute(attributeName);
+                    String            relationshipType = AtlasEntityUtil.getRelationshipType(attributeValue);
+                    AtlasAttribute    attribute        = getRelationshipAttribute(attributeName, relationshipType);
+                    AtlasAttributeDef attributeDef     = attribute.getAttributeDef();
 
                     if (!isAssignableValue(attributeValue, attributeDef)) {
                         return false;
@@ -609,9 +652,11 @@ public class AtlasEntityType extends AtlasStructType {
             } else if (obj instanceof Map) {
                 Map map = AtlasTypeUtil.toRelationshipAttributes((Map) obj);
 
-                for (AtlasAttribute attribute : relationshipAttributes.values()) {
-                    Object            attributeValue = map.get(attribute.getName());
-                    AtlasAttributeDef attributeDef   = attribute.getAttributeDef();
+                for (String attributeName : relationshipAttributes.keySet()) {
+                    Object            attributeValue   = map.get(attributeName);
+                    String            relationshipType = AtlasEntityUtil.getRelationshipType(attributeValue);
+                    AtlasAttribute    attribute        = getRelationshipAttribute(attributeName, relationshipType);
+                    AtlasAttributeDef attributeDef     = attribute.getAttributeDef();
 
                     if (!isAssignableValue(attributeValue, attributeDef)) {
                         return false;
@@ -651,7 +696,8 @@ public class AtlasEntityType extends AtlasStructType {
         boolean ret = true;
 
         if (value != null) {
-            AtlasAttribute attribute = relationshipAttributes.get(attributeDef.getName());
+            String         relationshipType = AtlasEntityUtil.getRelationshipType(value);
+            AtlasAttribute attribute        = getRelationshipAttribute(attributeDef.getName(), relationshipType);
 
             if (attribute != null) {
                 AtlasType attrType = attribute.getAttributeType();
@@ -685,14 +731,16 @@ public class AtlasEntityType extends AtlasStructType {
         if (obj != null && obj instanceof AtlasEntity) {
             AtlasEntity entityObj = (AtlasEntity) obj;
 
-            for (AtlasAttribute attribute : relationshipAttributes.values()) {
-                String            attributeName = attribute.getName();
-                AtlasAttributeDef attributeDef  = attribute.getAttributeDef();
+            for (String attributeName : relationshipAttributes.keySet()) {
+                if (entityObj.hasRelationshipAttribute(attributeName)) {
+                    Object            attributeValue   = entityObj.getRelationshipAttribute(attributeName);
+                    String            relationshipType = AtlasEntityUtil.getRelationshipType(attributeValue);
+                    AtlasAttribute    attribute        = getRelationshipAttribute(attributeName, relationshipType);
+                    AtlasAttributeDef attributeDef     = attribute.getAttributeDef();
 
-                if (((AtlasEntity) obj).hasRelationshipAttribute(attributeName)) {
-                    Object attributeValue = getNormalizedValue(entityObj.getAttribute(attributeName), attributeDef);
+                    attributeValue = getNormalizedValue(attributeValue, attributeDef);
 
-                    obj.setAttribute(attributeName, attributeValue);
+                    entityObj.setRelationshipAttribute(attributeName, attributeValue);
                 }
             }
         }
@@ -700,12 +748,14 @@ public class AtlasEntityType extends AtlasStructType {
 
     public void normalizeRelationshipAttributeValues(Map<String, Object> obj) {
         if (obj != null) {
-            for (AtlasAttribute attribute : relationshipAttributes.values()) {
-                String            attributeName = attribute.getName();
-                AtlasAttributeDef attributeDef  = attribute.getAttributeDef();
-
+            for (String attributeName : relationshipAttributes.keySet()) {
                 if (obj.containsKey(attributeName)) {
-                    Object attributeValue = getNormalizedValue(obj.get(attributeName), attributeDef);
+                    Object            attributeValue   = obj.get(attributeName);
+                    String            relationshipType = AtlasEntityUtil.getRelationshipType(attributeValue);
+                    AtlasAttribute    attribute        = getRelationshipAttribute(attributeName, relationshipType);
+                    AtlasAttributeDef attributeDef     = attribute.getAttributeDef();
+
+                    attributeValue = getNormalizedValue(attributeValue, attributeDef);
 
                     obj.put(attributeName, attributeValue);
                 }
@@ -714,7 +764,8 @@ public class AtlasEntityType extends AtlasStructType {
     }
 
     private Object getNormalizedValue(Object value, AtlasAttributeDef attributeDef) {
-        AtlasAttribute attribute = relationshipAttributes.get(attributeDef.getName());
+        String         relationshipType = AtlasEntityUtil.getRelationshipType(value);
+        AtlasAttribute attribute        = getRelationshipAttribute(attributeDef.getName(), relationshipType);
 
         if (attribute != null) {
             AtlasType attrType = attribute.getAttributeType();
@@ -746,32 +797,44 @@ public class AtlasEntityType extends AtlasStructType {
             if (obj instanceof AtlasEntity) {
                 AtlasEntity entityObj = (AtlasEntity) obj;
 
-                for (AtlasAttribute attribute : relationshipAttributes.values()) {
+                for (String attributeName : relationshipAttributes.keySet()) {
+                    Object         value            = entityObj.getRelationshipAttribute(attributeName);
+                    String         relationshipType = AtlasEntityUtil.getRelationshipType(value);
+                    AtlasAttribute attribute        = getRelationshipAttribute(attributeName, relationshipType);
+
                     if (attribute != null) {
-                        String    attributeName = attribute.getName();
-                        AtlasType dataType      = attribute.getAttributeType();
-                        Object    value         = entityObj.getAttribute(attributeName);
-                        String    fieldName     = objName + "." + attributeName;
+                        AtlasType dataType = attribute.getAttributeType();
+
+                        if (!attribute.getAttributeDef().getIsOptional()) {
+                            // if required attribute is null, check if attribute value specified in relationship
+                            if (value == null) {
+                                value = entityObj.getRelationshipAttribute(attributeName);
+                            }
+
+                            if (value == null) {
+                                ret = false;
+                                messages.add(objName + "." + attributeName + ": mandatory attribute value missing in type " + getTypeName());
+                            }
+                        }
 
                         if (isValidRelationshipType(dataType) && value != null) {
-                            ret = dataType.validateValue(value, fieldName, messages) && ret;
+                            ret = dataType.validateValue(value, objName + "." + attributeName, messages) && ret;
                         }
                     }
-
                 }
             } else if (obj instanceof Map) {
-                Map attributes = AtlasTypeUtil.toStructAttributes((Map) obj);
+                Map attributes = AtlasTypeUtil.toRelationshipAttributes((Map) obj);
 
-                for (AtlasAttribute attribute : relationshipAttributes.values()) {
+                for (String attributeName : relationshipAttributes.keySet()) {
+                    Object         value            = attributes.get(attributeName);
+                    String         relationshipType = AtlasEntityUtil.getRelationshipType(value);
+                    AtlasAttribute attribute        = getRelationshipAttribute(attributeName, relationshipType);
 
                     if (attribute != null) {
-                        String    attributeName = attribute.getName();
-                        AtlasType dataType      = attribute.getAttributeType();
-                        Object    value         = attributes.get(attributeName);
-                        String    fieldName     = objName + "." + attributeName;
+                        AtlasType dataType = attribute.getAttributeType();
 
                         if (isValidRelationshipType(dataType) && value != null) {
-                            ret = dataType.validateValue(value, fieldName, messages) && ret;
+                            ret = dataType.validateValue(value, objName + "." + attributeName, messages) && ret;
                         }
                     }
                 }

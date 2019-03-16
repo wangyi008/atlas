@@ -25,8 +25,10 @@ import org.apache.atlas.model.typedef.AtlasBaseTypeDef;
 import org.apache.atlas.model.typedef.AtlasRelationshipDef;
 import org.apache.atlas.model.typedef.AtlasRelationshipDef.RelationshipCategory;
 import org.apache.atlas.model.typedef.AtlasRelationshipEndDef;
+import org.apache.atlas.model.typedef.AtlasStructDef;
 import org.apache.atlas.model.typedef.AtlasStructDef.AtlasAttributeDef;
 import org.apache.atlas.model.typedef.AtlasStructDef.AtlasAttributeDef.Cardinality;
+import org.apache.atlas.model.typedef.AtlasStructDef.AtlasConstraintDef;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +36,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Map;
 import java.util.Objects;
 
+import static org.apache.atlas.model.typedef.AtlasStructDef.AtlasConstraintDef.CONSTRAINT_TYPE_OWNED_REF;
 import static org.apache.atlas.type.AtlasStructType.AtlasAttribute.AtlasRelationshipEdgeDirection;
 import static org.apache.atlas.type.AtlasStructType.AtlasAttribute.AtlasRelationshipEdgeDirection.BOTH;
 import static org.apache.atlas.type.AtlasStructType.AtlasAttribute.AtlasRelationshipEdgeDirection.IN;
@@ -47,6 +50,7 @@ public class AtlasRelationshipType extends AtlasStructType {
 
     private final AtlasRelationshipDef relationshipDef;
     private final boolean              hasLegacyAttributeEnd;
+    private       String               relationshipLabel;
     private       AtlasEntityType      end1Type;
     private       AtlasEntityType      end2Type;
 
@@ -70,6 +74,10 @@ public class AtlasRelationshipType extends AtlasStructType {
 
     public boolean hasLegacyAttributeEnd() {
         return this.hasLegacyAttributeEnd;
+    }
+
+    public String getRelationshipLabel() {
+        return this.relationshipLabel;
     }
 
     @Override
@@ -107,18 +115,22 @@ public class AtlasRelationshipType extends AtlasStructType {
 
         AtlasRelationshipEndDef endDef1           = relationshipDef.getEndDef1();
         AtlasRelationshipEndDef endDef2           = relationshipDef.getEndDef2();
-        String                  relationshipLabel = null;
+        String                  relationshipLabel = relationshipDef.getRelationshipLabel();
 
-        // if legacyLabel is not specified at both ends, use relationshipDef name as relationship label.
-        // if legacyLabel is specified in any one end, use it as the relationship label for both ends (legacy case).
-        // if legacyLabel is specified at both ends use the respective end's legacyLabel as relationship label (legacy case).
-        if (!endDef1.getIsLegacyAttribute() && !endDef2.getIsLegacyAttribute()) {
-            relationshipLabel = relationshipDef.getRelationshipLabel();
-        } else if (endDef1.getIsLegacyAttribute() && !endDef2.getIsLegacyAttribute()) {
-            relationshipLabel = getLegacyEdgeLabel(end1Type, endDef1.getName());
-        } else if (!endDef1.getIsLegacyAttribute() && endDef2.getIsLegacyAttribute()) {
-            relationshipLabel = getLegacyEdgeLabel(end2Type, endDef2.getName());
+        if (relationshipLabel == null) {
+            // if legacyLabel is not specified at both ends, use relationshipDef name as relationship label.
+            // if legacyLabel is specified in any one end, use it as the relationship label for both ends (legacy case).
+            // if legacyLabel is specified at both ends use the respective end's legacyLabel as relationship label (legacy case).
+            if (!endDef1.getIsLegacyAttribute() && !endDef2.getIsLegacyAttribute()) {
+                relationshipLabel = "r:" + getTypeName();
+            } else if (endDef1.getIsLegacyAttribute() && !endDef2.getIsLegacyAttribute()) {
+                relationshipLabel = getLegacyEdgeLabel(end1Type, endDef1.getName());
+            } else if (!endDef1.getIsLegacyAttribute() && endDef2.getIsLegacyAttribute()) {
+                relationshipLabel = getLegacyEdgeLabel(end2Type, endDef2.getName());
+            }
         }
+
+        this.relationshipLabel = relationshipLabel;
 
         addRelationshipAttributeToEndType(endDef1, end1Type, end2Type.getTypeName(), typeRegistry, relationshipLabel);
 
@@ -135,19 +147,21 @@ public class AtlasRelationshipType extends AtlasStructType {
         if (StringUtils.equals(endDef1.getType(), endDef2.getType()) &&
                 StringUtils.equals(endDef1.getName(), endDef2.getName())) {
 
-            AtlasAttribute endAttribute = end1Type.getRelationshipAttribute(endDef1.getName());
+            AtlasAttribute endAttribute = end1Type.getRelationshipAttribute(endDef1.getName(), relationshipDef.getName());
 
             endAttribute.setRelationshipEdgeDirection(BOTH);
         } else {
-            AtlasAttribute end1Attribute = end1Type.getRelationshipAttribute(endDef1.getName());
-            AtlasAttribute end2Attribute = end2Type.getRelationshipAttribute(endDef2.getName());
+            AtlasAttribute end1Attribute = end1Type.getRelationshipAttribute(endDef1.getName(), relationshipDef.getName());
+            AtlasAttribute end2Attribute = end2Type.getRelationshipAttribute(endDef2.getName(), relationshipDef.getName());
 
             //default relationship edge direction is end1 (out) -> end2 (in)
             AtlasRelationshipEdgeDirection end1Direction = OUT;
             AtlasRelationshipEdgeDirection end2Direction = IN;
 
             if (endDef1.getIsLegacyAttribute() && endDef2.getIsLegacyAttribute()) {
-                end2Direction = OUT;
+                if (relationshipDef.getRelationshipLabel() == null) { // only if label hasn't been overridden
+                    end2Direction = OUT;
+                }
             } else if (!endDef1.getIsLegacyAttribute() && endDef2.getIsLegacyAttribute()) {
                 end1Direction = IN;
                 end2Direction = OUT;
@@ -310,23 +324,39 @@ public class AtlasRelationshipType extends AtlasStructType {
         }
 
         if (attribute == null) { //attr doesn't exist in type - is a new relationship attribute
+            Cardinality        cardinality = endDef.getCardinality();
+            boolean            isOptional  = true;
+            AtlasConstraintDef constraint  = null;
 
-            if (endDef.getCardinality() == Cardinality.SET) {
+            if (cardinality == Cardinality.SET) {
                 attrTypeName = AtlasBaseTypeDef.getArrayTypeName(attrTypeName);
             }
 
-            attribute = new AtlasAttribute(entityType, new AtlasAttributeDef(attrName, attrTypeName),
-                                           typeRegistry.getType(attrTypeName), relationshipLabel);
+            if (relationshipDef.getRelationshipCategory() == RelationshipCategory.COMPOSITION) {
+                if (endDef.getIsContainer()) {
+                    constraint = new AtlasConstraintDef(CONSTRAINT_TYPE_OWNED_REF);
+                } else {
+                    isOptional = false;
+                }
+            }
+
+            AtlasAttributeDef attributeDef = new AtlasAttributeDef(attrName, attrTypeName, isOptional, cardinality);
+
+            if (constraint != null) {
+                attributeDef.addConstraint(constraint);
+            }
+
+            attribute = new AtlasAttribute(entityType, attributeDef,
+                                           typeRegistry.getType(attrTypeName), getTypeName(), relationshipLabel);
 
         } else {
             // attribute already exists (legacy attribute which is also a relationship attribute)
             // add relationshipLabel information to existing attribute
+            attribute.setRelationshipName(getTypeName());
             attribute.setRelationshipEdgeLabel(relationshipLabel);
         }
 
-        entityType.addRelationshipAttribute(attrName, attribute);
-
-        entityType.addRelationshipAttributeType(attrName, this);
+        entityType.addRelationshipAttribute(attrName, attribute, this);
     }
 
     private String getLegacyEdgeLabel(AtlasEntityType entityType, String attributeName) {

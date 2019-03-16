@@ -259,7 +259,7 @@ define(['require',
                         if (schemaOptions && schemaOptions.hasOwnProperty('schemaElementsAttribute') && schemaOptions.schemaElementsAttribute !== "") {
                             this.$('.schemaTable').show();
                             this.renderSchemaLayoutView(_.extend({}, obj, {
-                                attribute: collectionJSON.attributes[schemaOptions.schemaElementsAttribute]
+                                attribute: collectionJSON.attributes[schemaOptions.schemaElementsAttribute] || collectionJSON.relationshipAttributes[schemaOptions.schemaElementsAttribute]
                             }));
                         } else if (this.value && this.value.tabActive == "schema") {
                             Utils.setUrl({
@@ -390,7 +390,7 @@ define(['require',
                     val.entityGuid === that.id ? tag['self'].push(val) : tag['propagated'].push(val);
                 });
                 _.each(tag.self, function(val) {
-                    tagData += '<span class="btn btn-action btn-sm btn-icon btn-blue" title=' + val.typeName + ' data-id="tagClick"><span>' + val.typeName + '</span><i class="fa fa-close" data-id="deleteTag" data-type="tag" title="Remove Tag"></i></span>';
+                    tagData += '<span class="btn btn-action btn-sm btn-icon btn-blue" data-id="tagClick"><span title=' + val.typeName + ' >' + val.typeName + '</span><i class="fa fa-close" data-id="deleteTag" data-type="tag" title="Remove Tag"></i></span>';
                 });
                 _.each(tag.propagated, function(val) {
                     var crossButton = '<i class="fa fa-close" data-id="deleteTag" data-entityguid="' + val.entityGuid + '" data-type="tag" title="Remove Tag"></i>';
@@ -419,7 +419,6 @@ define(['require',
                     Globals.termMeanings.push(newD);
                 }
                 _.each(data, function(val) {
-                    console.log(val.guid)
                     if (val.relationshipStatus == "ACTIVE") {
                         termData += '<span class="btn btn-action btn-sm btn-icon btn-blue" title=' + val.displayText + ' data-id="termClick"><span>' + val.displayText + '</span><i class="fa fa-close" data-id="deleteTerm" data-guid="' + val.guid + '" data-type="term" title="Remove Term"></i></span>';
                     }
