@@ -25,15 +25,7 @@ import org.apache.atlas.AtlasErrorCode;
 import org.apache.atlas.AtlasException;
 import org.apache.atlas.exception.AtlasBaseException;
 import org.apache.atlas.groovy.GroovyExpression;
-import org.apache.atlas.repository.graphdb.AtlasEdge;
-import org.apache.atlas.repository.graphdb.AtlasGraph;
-import org.apache.atlas.repository.graphdb.AtlasGraphManagement;
-import org.apache.atlas.repository.graphdb.AtlasGraphQuery;
-import org.apache.atlas.repository.graphdb.AtlasGraphTraversal;
-import org.apache.atlas.repository.graphdb.AtlasIndexQuery;
-import org.apache.atlas.repository.graphdb.AtlasSchemaViolationException;
-import org.apache.atlas.repository.graphdb.AtlasVertex;
-import org.apache.atlas.repository.graphdb.GremlinVersion;
+import org.apache.atlas.repository.graphdb.*;
 import org.apache.atlas.repository.graphdb.janus.query.AtlasJanusGraphQuery;
 import org.apache.atlas.repository.graphdb.utils.IteratorToIterableAdapter;
 import org.apache.atlas.type.AtlasType;
@@ -59,41 +51,48 @@ import org.janusgraph.core.PropertyKey;
 import org.janusgraph.core.SchemaViolationException;
 import org.janusgraph.core.schema.JanusGraphIndex;
 import org.janusgraph.core.schema.JanusGraphManagement;
+import org.janusgraph.core.schema.Parameter;
 import org.janusgraph.diskstorage.BackendException;
+import org.janusgraph.graphdb.database.StandardJanusGraph;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.script.Bindings;
 import javax.script.ScriptEngine;
 import javax.script.ScriptException;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
 import static org.apache.atlas.repository.Constants.INDEX_SEARCH_VERTEX_PREFIX_DEFAULT;
 import static org.apache.atlas.repository.Constants.INDEX_SEARCH_VERTEX_PREFIX_PROPERTY;
+import static org.apache.atlas.repository.graphdb.janus.AtlasJanusGraphDatabase.getGraphInstance;
 
 /**
  * Janus implementation of AtlasGraph.
  */
 public class AtlasJanusGraph implements AtlasGraph<AtlasJanusVertex, AtlasJanusEdge> {
+    private static final Logger LOG = LoggerFactory.getLogger(AtlasJanusGraph.class);
 
-    private static Configuration APPLICATION_PROPERTIES = null;
+    private static final Parameter[]   EMPTY_PARAMETER_ARRAY  = new Parameter[0];
+    private static       Configuration APPLICATION_PROPERTIES = null;
 
     private final ConvertGremlinValueFunction GREMLIN_VALUE_CONVERSION_FUNCTION = new ConvertGremlinValueFunction();
     private final Set<String>                 multiProperties                   = new HashSet<>();
+    private final StandardJanusGraph          janusGraph;
 
     public AtlasJanusGraph() {
+        this(getGraphInstance());
+    }
+
+    public AtlasJanusGraph(JanusGraph graphInstance) {
         //determine multi-properties once at startup
         JanusGraphManagement mgmt = null;
 
         try {
-            mgmt = AtlasJanusGraphDatabase.getGraphInstance().openManagement();
+            mgmt = graphInstance.openManagement();
 
             Iterable<PropertyKey> keys = mgmt.getRelationTypes(PropertyKey.class);
 
@@ -107,6 +106,8 @@ public class AtlasJanusGraph implements AtlasGraph<AtlasJanusVertex, AtlasJanusE
                 mgmt.rollback();
             }
         }
+
+        janusGraph = (StandardJanusGraph) AtlasJanusGraphDatabase.getGraphInstance();
     }
 
     @Override
@@ -189,6 +190,23 @@ public class AtlasJanusGraph implements AtlasGraph<AtlasJanusVertex, AtlasJanusE
     }
 
     @Override
+    public AtlasIndexQueryParameter indexQueryParameter(String parameterName, String parameterValue) {
+        return new AtlasJanusIndexQueryParameter(parameterName, parameterValue);
+    }
+
+    @Override
+    public AtlasGraphIndexClient getGraphIndexClient() throws AtlasException {
+        try {
+            initApplicationProperties();
+
+            return new AtlasJanusGraphIndexClient(APPLICATION_PROPERTIES);
+        } catch (Exception e) {
+            LOG.error("Error encountered in creating Graph Index Client.", e);
+            throw new AtlasException(e);
+        }
+    }
+
+    @Override
     public void commit() {
         getGraph().tx().commit();
     }
@@ -199,21 +217,45 @@ public class AtlasJanusGraph implements AtlasGraph<AtlasJanusVertex, AtlasJanusE
     }
 
     @Override
-    public AtlasIndexQuery<AtlasJanusVertex, AtlasJanusEdge> indexQuery(String fulltextIndex, String graphQuery) {
-        return indexQuery(fulltextIndex, graphQuery, 0);
+    public AtlasIndexQuery<AtlasJanusVertex, AtlasJanusEdge> indexQuery(String indexName, String graphQuery) {
+        return indexQuery(indexName, graphQuery, 0, null);
     }
 
     @Override
-    public AtlasIndexQuery<AtlasJanusVertex, AtlasJanusEdge> indexQuery(String fulltextIndex, String graphQuery, int offset) {
-        String               prefix = getIndexQueryPrefix();
-        JanusGraphIndexQuery query  = getGraph().indexQuery(fulltextIndex, graphQuery).setElementIdentifier(prefix).offset(offset);
+    public AtlasIndexQuery<AtlasJanusVertex, AtlasJanusEdge> indexQuery(String indexName, String graphQuery, int offset) {
+        return indexQuery(indexName, graphQuery, offset, null);
+    }
 
+    /**
+     * Creates an index query.
+     *
+     * @param indexQueryParameters the parameterObject containing the information needed for creating the index.
+     *
+     */
+    public AtlasIndexQuery<AtlasJanusVertex, AtlasJanusEdge> indexQuery(GraphIndexQueryParameters indexQueryParameters) {
+        return indexQuery(indexQueryParameters.getIndexName(), indexQueryParameters.getGraphQueryString(), indexQueryParameters.getOffset(), indexQueryParameters.getIndexQueryParameters());
+    }
+
+    private AtlasIndexQuery<AtlasJanusVertex, AtlasJanusEdge> indexQuery(String indexName, String graphQuery, int offset, List<AtlasIndexQueryParameter> indexQueryParameterList) {
+        String               prefix = getIndexQueryPrefix();
+        JanusGraphIndexQuery query  = getGraph().indexQuery(indexName, graphQuery).setElementIdentifier(prefix).offset(offset);
+
+        if(indexQueryParameterList != null && indexQueryParameterList.size() > 0) {
+            for(AtlasIndexQueryParameter indexQueryParameter: indexQueryParameterList) {
+                query = query.addParameter(new Parameter(indexQueryParameter.getParameterName(), indexQueryParameter.getParameterValue()));
+            }
+        }
         return new AtlasJanusIndexQuery(this, query);
     }
 
     @Override
     public AtlasGraphManagement getManagementSystem() {
         return new AtlasJanusGraphManagement(this, getGraph().openManagement());
+    }
+
+    @Override
+    public Set getOpenTransactions() {
+        return janusGraph.getOpenTransactions();
     }
 
     @Override
@@ -269,7 +311,7 @@ public class AtlasJanusGraph implements AtlasGraph<AtlasJanusVertex, AtlasJanusE
     }
 
     private JanusGraph getGraph() {
-        return AtlasJanusGraphDatabase.getGraphInstance();
+        return getGraphInstance();
     }
 
     @Override
@@ -373,6 +415,13 @@ public class AtlasJanusGraph implements AtlasGraph<AtlasJanusVertex, AtlasJanusE
 
     public void addMultiProperties(Set<String> names) {
         multiProperties.addAll(names);
+    }
+
+
+    String getIndexFieldName(AtlasPropertyKey propertyKey, JanusGraphIndex graphIndex) {
+        PropertyKey janusKey = AtlasJanusObjectFactory.createPropertyKey(propertyKey);
+
+        return janusGraph.getIndexSerializer().getDefaultFieldName(janusKey, EMPTY_PARAMETER_ARRAY, graphIndex.getBackingIndex());
     }
 
 

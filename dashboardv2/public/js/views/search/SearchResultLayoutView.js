@@ -29,8 +29,9 @@ define(['require',
     'utils/CommonViewFunction',
     'utils/Messages',
     'utils/Enums',
-    'utils/UrlLinks'
-], function(require, Backbone, tableDragger, SearchResultLayoutViewTmpl, Modal, VEntity, Utils, Globals, VSearchList, VCommon, CommonViewFunction, Messages, Enums, UrlLinks) {
+    'utils/UrlLinks',
+    'platform'
+], function(require, Backbone, tableDragger, SearchResultLayoutViewTmpl, Modal, VEntity, Utils, Globals, VSearchList, VCommon, CommonViewFunction, Messages, Enums, UrlLinks, platform) {
     'use strict';
 
     var SearchResultLayoutView = Backbone.Marionette.LayoutView.extend(
@@ -69,13 +70,15 @@ define(['require',
                 showPage: "[data-id='showPage']",
                 gotoPage: "[data-id='gotoPage']",
                 gotoPagebtn: "[data-id='gotoPagebtn']",
-                activePage: "[data-id='activePage']"
+                activePage: "[data-id='activePage']",
+                rowData: ".row"
             },
             templateHelpers: function() {
                 return {
                     entityCreate: Globals.entityCreate,
                     searchType: this.searchType,
                     fromView: this.fromView,
+                    isGlossaryView: this.fromView == "glossary",
                     isSearchTab: Utils.getUrlState.isSearchTab()
                 };
             },
@@ -143,7 +146,7 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'value', 'guid', 'initialView', 'isTypeTagNotExists', 'classificationDefCollection', 'entityDefCollection', 'typeHeaders', 'searchVent', 'enumDefCollection', 'tagCollection', 'searchTableColumns', 'isDisable', 'fromView', 'glossaryCollection', 'termName'));
+                _.extend(this, _.pick(options, 'value', 'guid', 'initialView', 'isTypeTagNotExists', 'classificationDefCollection', 'entityDefCollection', 'typeHeaders', 'searchVent', 'enumDefCollection', 'tagCollection', 'searchTableColumns', 'isTableDropDisable', 'fromView', 'glossaryCollection', 'termName'));
                 this.entityModel = new VEntity();
                 this.searchCollection = new VSearchList();
                 this.limit = 25;
@@ -175,10 +178,14 @@ define(['require',
                             this.offset = pageOffset;
                         }
                     }
+                };
+                if (platform.name === "IE") {
+                    this.isTableDropDisable = true;
                 }
             },
             bindEvents: function() {
                 var that = this;
+                this.onClickLoadMore();
                 this.listenTo(this.searchCollection, 'backgrid:selected', function(model, checked) {
                     this.arr = [];
                     if (checked === true) {
@@ -236,6 +243,9 @@ define(['require',
                 this.listenTo(this.searchVent, "search:refresh", function(model, response) {
                     this.fetchCollection();
                 }, this);
+                this.listenTo(this.searchCollection, "backgrid:sorted", function(model, response) {
+                    this.checkTableFetch();
+                }, this)
             },
             onRender: function() {
                 var that = this;
@@ -247,18 +257,19 @@ define(['require',
                     includeOrderAbleColumns: false,
                     includeSizeAbleColumns: false,
                     includeTableLoader: false,
+                    includeAtlasTableSorting: true,
                     columnOpts: {
                         opts: {
                             initialColumnsVisible: null,
                             saveState: false
                         },
                         visibilityControlOpts: {
-                            buttonTemplate: _.template("<button class='btn btn-action btn-sm pull-right'>Columns&nbsp<i class='fa fa-caret-down'></i></button>")
+                            buttonTemplate: _.template("<button class='btn btn-action btn-sm pull-right'>Attributes&nbsp<i class='fa fa-caret-down'></i></button>")
                         },
                         el: this.ui.colManager
                     },
                     gridOpts: {
-                        emptyText: 'No Record found!',
+                        emptyText: 'No Records found!',
                         className: 'table table-hover backgrid table-quickMenu colSort'
                     },
                     filterOpts: {},
@@ -416,8 +427,12 @@ define(['require',
                             return;
                         }
                         if (isPostMethod) {
+                            Utils.findAndMergeRefEntity({
+                                attributeObject: dataOrCollection.entities,
+                                referredEntities: dataOrCollection.referredEntities
+                            });
                             that.searchCollection.referredEntities = dataOrCollection.referredEntities;
-                            Utils.findAndMergeRefEntity(dataOrCollection.entities, dataOrCollection.referredEntities);
+                            that.searchCollection.entities = dataOrCollection.entities;
                             that.searchCollection.reset(dataOrCollection.entities, { silent: true });
                         }
 
@@ -526,17 +541,13 @@ define(['require',
                     }));
                 });
             },
-            renderTableLayoutView: function(col) {
-                var that = this;
-                require(['utils/TableLayout'], function(TableLayout) {
-                    // displayOrder added for column manager
-                    if (that.value.uiParameters) {
-                        var savedColumnOrder = _.object(that.value.uiParameters.split(',').map(function(a) {
-                            return a.split('::');
-                        })); // get Column position from string to object
-                    }
-                    var columnCollection = Backgrid.Columns.extend({
+            tableRender: function(options) {
+                var that = this,
+                    savedColumnOrder = options.order,
+                    TableLayout = options.table,
+                    columnCollection = Backgrid.Columns.extend({
                         sortKey: "displayOrder",
+                        className: "my-awesome-css-animated-grid",
                         comparator: function(item) {
                             return item.get(this.sortKey) || 999;
                         },
@@ -547,29 +558,50 @@ define(['require',
                             return this;
                         }
                     });
-                    var columns = new columnCollection((that.searchCollection.dynamicTable ? that.getDaynamicColumns(that.searchCollection.toJSON()) : that.getFixedDslColumn()));
-                    columns.setPositions().sort();
-                    var table = new TableLayout(_.extend({}, that.commonTableOptions, {
-                        columns: columns
-                    }));
-                    if (!that.REntityTableLayoutView) {
-                        return;
+                var columns = new columnCollection((that.searchCollection.dynamicTable ? that.getDaynamicColumns(that.searchCollection.toJSON()) : that.getFixedDslColumn()));
+                columns.setPositions().sort();
+                var table = new TableLayout(_.extend({}, that.commonTableOptions, {
+                    columns: columns
+                }));
+                if (table.collection.length === 0) {
+                    this.hideIrreleventElements();
+                    return;
+                }
+                if (!that.REntityTableLayoutView) {
+                    return;
+                }
+                that.REntityTableLayoutView.show(table);
+                if (that.value.searchType !== "dsl") {
+                    that.ui.containerCheckBox.show();
+                } else {
+                    that.ui.containerCheckBox.hide();
+                }
+                that.$(".ellipsis-with-margin .inputAssignTag").hide();
+                table.trigger("grid:refresh"); /*Event fire when table rendered*/
+                // that.REntityTableLayoutView.$el.find('.colSort thead tr th:not(:first)').addClass('dragHandler');
+                if (that.isTableDropDisable !== true) {
+                    var tableDropFunction = function(from, to, el) {
+                        tableDragger(document.querySelector(".colSort")).destroy();
+                        that.columnOrder = that.getColumnOrder(el.querySelectorAll('th.renderable'));
+                        that.triggerUrl();
+                        that.tableRender({ "order": that.columnOrder, "table": TableLayout });
+                        that.checkTableFetch();
                     }
-                    that.REntityTableLayoutView.show(table);
-                    if (that.value.searchType !== "dsl") {
-                        that.ui.containerCheckBox.show();
-                    } else {
-                        that.ui.containerCheckBox.hide();
+                    that.REntityTableLayoutView.$el.find('.colSort thead tr th:not(.select-all-header-cell)').addClass('dragHandler');
+                    tableDragger(document.querySelector(".colSort"), { dragHandler: ".dragHandler" }).on('drop', tableDropFunction);
+                }
+            },
+            renderTableLayoutView: function(col) {
+                var that = this;
+                require(['utils/TableLayout'], function(TableLayout) {
+                    // displayOrder added for column manager
+                    if (that.value.uiParameters) {
+                        var savedColumnOrder = _.object(that.value.uiParameters.split(',').map(function(a) {
+                            return a.split('::');
+                        })); // get Column position from string to object
                     }
-                    that.$(".ellipsis .inputAssignTag").hide();
-                    table.trigger("grid:refresh"); /*Event fire when table rendered*/
-                    if (that.isDisable !== true) {
-                        tableDragger(document.querySelector(".colSort")).on('drop', function(from, to, el) {
-                            that.columnOrder = that.getColumnOrder(el.querySelectorAll('th.renderable'));
-                            table.trigger("grid:refresh:update");
-                            that.triggerUrl();
-                        });
-                    }
+
+                    that.tableRender({ "order": savedColumnOrder, "table": TableLayout });
                     that.checkTableFetch();
                 });
             },
@@ -621,9 +653,8 @@ define(['require',
                     label: this.value && this.value.profileDBView ? "Table Name" : "Name",
                     cell: "html",
                     editable: false,
-                    sortable: false,
                     resizeable: true,
-                    orderable: true,
+                    orderable: false,
                     renderable: true,
                     className: "searchTableName",
                     formatter: _.extend({}, Backgrid.CellFormatter.prototype, {
@@ -653,7 +684,6 @@ define(['require',
                     label: "Owner",
                     cell: "String",
                     editable: false,
-                    sortable: false,
                     resizeable: true,
                     orderable: true,
                     renderable: true,
@@ -673,7 +703,6 @@ define(['require',
                         label: "Date Created",
                         cell: "Html",
                         editable: false,
-                        sortable: false,
                         formatter: _.extend({}, Backgrid.CellFormatter.prototype, {
                             fromRaw: function(rawValue, model) {
                                 var obj = model.toJSON();
@@ -692,7 +721,6 @@ define(['require',
                         label: "Description",
                         cell: "String",
                         editable: false,
-                        sortable: false,
                         resizeable: true,
                         orderable: true,
                         renderable: true,
@@ -711,7 +739,6 @@ define(['require',
                         label: "Type",
                         cell: "Html",
                         editable: false,
-                        sortable: false,
                         resizeable: true,
                         orderable: true,
                         renderable: (columnToShow ? _.contains(columnToShow, 'typeName') : true),
@@ -735,7 +762,8 @@ define(['require',
                             var attrObj = Utils.getNestedSuperTypeObj({ data: def.toJSON(), collection: this.entityDefCollection, attrMerge: true });
                             _.each(attrObj, function(obj, key) {
                                 var key = obj.name,
-                                    isRenderable = _.contains(columnToShow, key)
+                                    isRenderable = _.contains(columnToShow, key),
+                                    isSortable = obj.typeName.search(/(array|map)/i) == -1;
                                 if (key == "name" || key == "description" || key == "owner") {
                                     if (columnToShow) {
                                         col[key].renderable = isRenderable;
@@ -746,9 +774,9 @@ define(['require',
                                     label: obj.name.capitalize(),
                                     cell: "Html",
                                     editable: false,
-                                    sortable: false,
                                     resizeable: true,
                                     orderable: true,
+                                    sortable: isSortable,
                                     renderable: isRenderable,
                                     formatter: _.extend({}, Backgrid.CellFormatter.prototype, {
                                         fromRaw: function(rawValue, model) {
@@ -761,7 +789,15 @@ define(['require',
                                                     'isTable': false
                                                 };
                                                 tempObj.valueObject[key] = modelObj.attributes[key];
-                                                return CommonViewFunction.propertyTable(tempObj);
+                                                var tablecolumn = CommonViewFunction.propertyTable(tempObj);
+                                                if (_.isArray(modelObj.attributes[key])) {
+                                                    var column = $("<div>" + tablecolumn + "</div>")
+                                                    if (tempObj.valueObject[key].length > 2) {
+                                                        column.addClass("toggleList semi-collapsed").append("<span><a data-id='load-more-columns'>Show More</a></span>");
+                                                    }
+                                                    return column;
+                                                }
+                                                return tablecolumn;
                                             }
                                         }
                                     })
@@ -771,6 +807,28 @@ define(['require',
                     }
                 }
                 return this.searchCollection.constructor.getTableCols(col, this.searchCollection);
+            },
+            onClickLoadMore: function() {
+                var that = this;
+                this.$el.on('click', "[data-id='load-more-columns']", function(event) {
+                    event.stopPropagation();
+                    event.stopImmediatePropagation();
+                    var $this = $(this),
+                        $toggleList = $(this).parents('.toggleList');
+                    if ($toggleList.length) {
+                        if ($toggleList.hasClass('semi-collapsed')) {
+                            $toggleList.removeClass('semi-collapsed');
+                            $this.text("Show Less");
+                        } else {
+                            $toggleList.addClass('semi-collapsed');
+                            $this.text("Show More");
+                        }
+                    }
+                });
+            },
+            hideIrreleventElements: function() {
+                this.ui.rowData.siblings('.well').hide();
+                this.ui.rowData.siblings('.no-data').show();
             },
             getDaynamicColumns: function(valueObj) {
                 var that = this,
@@ -782,7 +840,6 @@ define(['require',
                             label: key.capitalize(),
                             cell: "Html",
                             editable: false,
-                            sortable: false,
                             resizeable: true,
                             orderable: true,
                             formatter: _.extend({}, Backgrid.CellFormatter.prototype, {
@@ -928,7 +985,7 @@ define(['require',
             },
             hideLoader: function(options) {
                 this.$('.fontLoader:not(.for-ignore)').removeClass('show');
-                options && options.type === 'error' ? this.$('.ellipsis,.pagination-box').hide() : this.$('.ellipsis,.pagination-box').show(); // only show for first time and hide when type is error
+                options && options.type === 'error' ? this.$('.ellipsis-with-margin,.pagination-box').hide() : this.$('.ellipsis-with-margin,.pagination-box').show(); // only show for first time and hide when type is error
                 this.$('.tableOverlay').removeClass('show');
             },
             checkedValue: function(e) {
@@ -944,10 +1001,12 @@ define(['require',
             },
             onClickAddTermBtn: function(e) {
                 var that = this,
-                    entityGuid = $(e.currentTarget).data("guid");
+                    entityGuid = $(e.currentTarget).data("guid"),
+                    associatedTerms = this.searchCollection.find({ guid: entityGuid }).get('meanings');
                 require(['views/glossary/AssignTermLayoutView'], function(AssignTermLayoutView) {
                     var view = new AssignTermLayoutView({
                         guid: entityGuid,
+                        associatedTerms: associatedTerms,
                         callback: function() {
                             that.fetchCollection();
                         },
@@ -965,7 +1024,7 @@ define(['require',
                     tagName: tagName,
                     guid: guid,
                     associatedGuid: guid != entityGuid ? entityGuid : null,
-                    msg: "<div class='ellipsis'>Remove: " + "<b>" + _.escape(tagName) + "</b> assignment from" + " " + "<b>" + assetName + " ?</b></div>",
+                    msg: "<div class='ellipsis-with-margin'>Remove: " + "<b>" + _.escape(tagName) + "</b> assignment from" + " " + "<b>" + assetName + " ?</b></div>",
                     titleMessage: Messages.removeTag,
                     okText: "Remove",
                     showLoader: that.showLoader.bind(that),
@@ -992,7 +1051,7 @@ define(['require',
                         relationshipGuid: termObj.relationGuid
                     },
                     collection: that.glossaryCollection,
-                    msg: "<div class='ellipsis'>Remove: " + "<b>" + _.escape(termName) + "</b> assignment from" + " " + "<b>" + assetname + "?</b></div>",
+                    msg: "<div class='ellipsis-with-margin'>Remove: " + "<b>" + _.escape(termName) + "</b> assignment from" + " " + "<b>" + assetname + "?</b></div>",
                     titleMessage: Messages.glossary.removeTermfromEntity,
                     isEntityView: true,
                     buttonText: "Remove",

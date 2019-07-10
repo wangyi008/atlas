@@ -19,10 +19,10 @@
 package org.apache.atlas.discovery;
 
 
+import com.sun.xml.bind.v2.model.annotation.Quick;
 import org.apache.atlas.SortOrder;
 import org.apache.atlas.exception.AtlasBaseException;
-import org.apache.atlas.model.discovery.AtlasSearchResult;
-import org.apache.atlas.model.discovery.SearchParameters;
+import org.apache.atlas.model.discovery.*;
 import org.apache.atlas.model.profile.AtlasUserSavedSearch;
 
 import java.util.List;
@@ -139,4 +139,19 @@ public interface AtlasDiscoveryService {
      * @throws AtlasBaseException
      */
     void deleteSavedSearch(String currentUser, String guid) throws AtlasBaseException;
+
+    /**
+     * Search for entities matching the search criteria
+     * @param searchParameters Search criteria
+     * @return Matching entities
+     * @throws AtlasBaseException
+     */
+    AtlasQuickSearchResult quickSearch(QuickSearchParameters searchParameters) throws AtlasBaseException;
+
+    /**
+     * Should return top 5 suggestion strings for the given prefix.
+     * @param prefixString the prefix string
+     * @return top 5 suggestion strings for the given prefix.
+     */
+    AtlasSuggestionsResult getSuggestions(String prefixString);
 }

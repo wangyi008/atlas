@@ -155,6 +155,15 @@ public interface AtlasGraphManagement {
      *
      * @param vertexIndex
      * @param propertyKey
+     * @return the index field name used for the given property
      */
-    void addMixedIndex(String vertexIndex, AtlasPropertyKey propertyKey);
+    String addMixedIndex(String vertexIndex, AtlasPropertyKey propertyKey);
+
+    /**
+     * Gets the index field name for the vertex property.
+     * @param indexName
+     * @param propertyKey
+     * @return the encoded name for the index
+     */
+    String getIndexFieldName(String indexName, AtlasPropertyKey propertyKey);
 }

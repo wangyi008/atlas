@@ -61,7 +61,6 @@
         &.node-detail-highlight {
             stroke: $color_havelock_blue_approx;
             stroke-width: 2px;
-            opacity: 0.8;
         }
 
         &.nodeImage {
@@ -101,6 +100,12 @@
                 }
             }
         }
+    }
+}
+
+.invisible {
+    .node circle {
+        transition: all 0s;
     }
 }
 
@@ -262,9 +267,6 @@ g.type-TK>rect {
         text-align: left;
 
         &.deleted-relation {
-            a {
-                color: #BB5838 !important;
-            }
 
             .deleteBtn {
                 padding: 2px 8px !important;
@@ -315,6 +317,10 @@ g.type-TK>rect {
     border: 1px solid #686868;
     color: $dark_gray;
     background: white;
+
+    &[disabled] {
+        opacity: .3;
+    }
 
     &:hover {
         border: 1px solid #686868;
@@ -420,5 +426,28 @@ span#zoom_in {
         }
 
         word-break: break-all;
+    }
+}
+
+.hidden-svg {
+    visibility: hidden;
+}
+
+#tab-relationship {
+
+    .entity-status {
+        &.active {
+            color: $color_jungle_green_approx;
+        }
+
+        &.deleted {
+            color: $delete_link;
+        }
+
+    }
+
+    .entity-list {
+        list-style-position: inside;
+
     }
 }

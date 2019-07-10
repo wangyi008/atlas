@@ -134,6 +134,58 @@ define(['require'], function(require) {
         validValues: getTermRelationAttributes(),
         validValuesFor: getTermRelationAttributes()
     }
-    Enums.addOnClassification = ["_CLASSIFIED", "_NOT_CLASSIFIED"]
+    Enums.addOnClassification = ["_CLASSIFIED", "_NOT_CLASSIFIED"];
+
+    Enums.stats = {
+        generalData: {
+            "collectionTime": "day"
+        },
+        Server: {
+            "startTimeStamp": "day",
+            "activeTimeStamp": "day",
+            "upTime": "none"
+        },
+        ConnectionStatus: {
+            "statusBackendStore": "status-html",
+            "statusIndexStore": "status-html"
+        },
+        Notification: {
+            "currentDay": "number",
+            "currentDayAvgTime": "number",
+            "currentDayEntityCreates": "number",
+            "currentDayEntityDeletes": "number",
+            "currentDayEntityUpdates": "number",
+            "currentDayFailed": "number",
+            "currentDayStartTime": "day",
+            "currentHour": "number",
+            "currentHourAvgTime": "millisecond",
+            "currentHourEntityCreates": "number",
+            "currentHourEntityDeletes": "number",
+            "currentHourEntityUpdates": "number",
+            "currentHourFailed": "number",
+            "currentHourStartTime": "day",
+            "lastMessageProcessedTime": "day",
+            "offsetCurrent": "number",
+            "offsetStart": "number",
+            "previousDay": "number",
+            "previousDayAvgTime": "millisecond",
+            "previousDayEntityCreates": "number",
+            "previousDayEntityDeletes": "number",
+            "previousDayEntityUpdates": "number",
+            "previousDayFailed": "number",
+            "previousHour": "number",
+            "previousHourAvgTime": "millisecond",
+            "previousHourEntityCreates": "number",
+            "previousHourEntityDeletes": "number",
+            "previousHourEntityUpdates": "number",
+            "previousHourFailed": "number",
+            "total": "number",
+            "totalAvgTime": "millisecond",
+            "totalCreates": "number",
+            "totalDeletes": "number",
+            "totalFailed": "number",
+            "totalUpdates": "number"
+        }
+    };
     return Enums;
 });

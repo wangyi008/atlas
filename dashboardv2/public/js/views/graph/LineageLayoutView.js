@@ -63,7 +63,9 @@ define(['require',
                 searchNode: '[data-id="searchNode"]',
                 nodeDetailTable: '[data-id="nodeDetailTable"]',
                 showOnlyHoverPath: '[data-id="showOnlyHoverPath"]',
-                showTooltip: '[data-id="showTooltip"]'
+                showTooltip: '[data-id="showTooltip"]',
+                saveSvg: '[data-id="saveSvg"]',
+                resetLineage: '[data-id="resetLineage"]'
             },
             templateHelpers: function() {
                 return {
@@ -82,6 +84,8 @@ define(['require',
                 events["click " + this.ui.settingToggler] = 'onClickSettingToggler';
                 events["click " + this.ui.lineageFullscreenToggler] = 'onClickLineageFullscreenToggler';
                 events["click " + this.ui.searchToggler] = 'onClickSearchToggler';
+                events["click " + this.ui.saveSvg] = 'onClickSaveSvg';
+                events["click " + this.ui.resetLineage] = 'onClickResetLineage';
                 return events;
             },
 
@@ -90,12 +94,11 @@ define(['require',
              * @constructs
              */
             initialize: function(options) {
-                _.extend(this, _.pick(options, 'processCheck', 'guid', 'entityDefCollection', 'actionCallBack', 'fetchCollection', 'attributeDefs'));
+                _.extend(this, _.pick(options, 'processCheck', 'guid', 'entity', 'entityName', 'entityDefCollection', 'actionCallBack', 'fetchCollection', 'attributeDefs'));
                 this.collection = new VLineageList();
                 this.lineageData = null;
                 this.typeMap = {};
                 this.apiGuid = {};
-                this.asyncFetchCounter = 0;
                 this.edgeCall;
                 this.filterObj = {
                     isProcessHideCheck: false,
@@ -127,8 +130,16 @@ define(['require',
             onRender: function() {
                 var that = this;
                 this.fetchGraphData();
+
+
                 if (platform.name === "IE") {
                     this.$('svg').css('opacity', '0');
+
+                }
+
+                if (platform.name === "Microsoft Edge" || platform.name === "IE") {
+                    $(that.ui.saveSvg).hide();
+
                 }
                 if (this.layoutRendered) {
                     this.layoutRendered();
@@ -158,6 +169,11 @@ define(['require',
                 var icon = $(e.currentTarget).find('i'),
                     panel = $(e.target).parents('.tab-pane').first();
                 icon.toggleClass('fa-expand fa-compress');
+                if (icon.hasClass('fa-expand')) {
+                    icon.parent('button').attr("data-original-title", "Full Screen");
+                } else {
+                    icon.parent('button').attr("data-original-title", "Default View");
+                }
                 panel.toggleClass('fullscreen-mode');
             },
             onCheckUnwantedEntity: function(e) {
@@ -205,21 +221,28 @@ define(['require',
                 this.fromToNodeData = {};
                 this.$('.fontLoader').show();
                 this.$('svg>g').hide();
+                this.toggleDisableState({
+                    "el": that.$(".graph-button-group button,select[data-id='selectDepth']")
+                });
                 this.collection.getLineage(this.guid, {
                     skipDefaultError: true,
                     queryParam: queryParam,
                     success: function(data) {
+                        if (that.isDestroyed) {
+                            return;
+                        }
                         if (data.relations.length) {
                             that.lineageData = $.extend(true, {}, data);
                             that.relationshipMap = that.crateLineageRelationshipHashMap(data);
                             that.guidEntityMap = $.extend(true, {}, data.guidEntityMap);
-                            if (that.lineageData) {
-                                that.renderLineageTypeSearch();
-                            }
                             that.generateData({ "relationshipMap": that.relationshipMap, "guidEntityMap": that.guidEntityMap });
+                            that.toggleDisableState({
+                                "el": that.$(".graph-button-group button,select[data-id='selectDepth']")
+                            });
                         } else {
                             that.noLineage();
                             that.hideCheckForProcess();
+
                         }
                     },
                     cust_error: function(model, response) {
@@ -432,9 +455,8 @@ define(['require',
                     this.fromToNodeData[this.guid]['isLineage'] = false;
                     this.findImpactNodeAndUpdateData({ "relationshipMap": filterRelationshipMap, "guid": this.guid, "getStyleObjStr": getStyleObjStr });
                 }
-                if (this.asyncFetchCounter == 0) {
-                    this.createGraph();
-                }
+                this.renderLineageTypeSearch();
+                this.createGraph();
             },
             findImpactNodeAndUpdateData: function(options) {
                 var that = this,
@@ -472,6 +494,9 @@ define(['require',
                     "translate(" + this.zoom.translate() + ")" +
                     "scale(" + this.zoom.scale() + ")"
                 );
+                LineageUtils.refreshGraphForIE({
+                    edgeEl: this.$('svg .edgePath')
+                });
             },
             interpolateZoom: function(translate, scale, that, zoom) {
                 return d3.transition().duration(350).tween("zoom", function() {
@@ -488,7 +513,10 @@ define(['require',
             createGraph: function() {
                 var that = this,
                     width = this.$('svg').width(),
-                    height = this.$('svg').height();
+                    height = this.$('svg').height(),
+                    imageObject = {};
+                $('.resizeGraph').css("height", height + "px");
+
                 this.g.nodes().forEach(function(v) {
                     var node = that.g.node(v);
                     // Round the corners of the nodes
@@ -500,6 +528,8 @@ define(['require',
                 var render = new dagreD3.render();
                 // Add our custom arrow (a hollow-point)
                 render.arrows().arrowPoint = function normal(parent, id, edge, type) {
+                    var parentNode = parent && parent[0] && parent[0][0] && parent[0][0].parentNode ? parent[0][0].parentNode : parent;
+                    d3.select(parentNode).select('path.path').attr('marker-end', "url(#" + id + ")");
                     var marker = parent.append("marker")
                         .attr("id", id)
                         .attr("viewBox", "0 0 10 10")
@@ -524,8 +554,11 @@ define(['require',
                         .attr('fill', 'url(#img_' + node.id + ')')
                         .attr('r', '24px')
                         .attr('data-stroke', node.id)
+                        .attr('stroke-width', "2px")
                         .attr("class", "nodeImage " + (currentNode ? "currentNode" : (node.isProcess ? "process" : "node")));
-
+                    if (currentNode) {
+                        shapeSvg.attr("stroke", "#fb4200")
+                    }
                     parent.insert("defs")
                         .append("pattern")
                         .attr("x", "0%")
@@ -535,18 +568,66 @@ define(['require',
                         .attr("width", "100%")
                         .attr("height", "100%")
                         .append('image')
-                        .attr("xlink:href", function(d) {
+                        .attr("href", function(d) {
+                            var that = this;
                             if (node) {
-                                return Utils.getEntityIconPath({ entityData: node });
+                                // to check for IE-10
+                                var originLink = window.location.origin;
+                                if (platform.name === "IE") {
+                                    originLink = window.location.protocol + "//" + window.location.host;
+                                }
+                                var imageIconPath = Utils.getEntityIconPath({ entityData: node }),
+                                    imagePath = ((originLink + Utils.getBaseUrl(window.location.pathname)) + imageIconPath);
+
+                                var getImageData = function(options) {
+                                    var imagePath = options.imagePath,
+                                        ajaxOptions = {
+                                            "url": imagePath,
+                                            "method": "get",
+                                            "async": false,
+                                        }
+
+                                    if (platform.name !== "IE") {
+                                        ajaxOptions["mimeType"] = "text/plain; charset=x-user-defined";
+                                    }
+                                    $.ajax(ajaxOptions)
+                                        .always(function(data, status, xhr) {
+                                            if (data.status == 404) {
+                                                getImageData({
+                                                    "imagePath": Utils.getEntityIconPath({ entityData: node, errorUrl: imagePath }),
+                                                    "imageIconPath": imageIconPath
+                                                });
+                                            } else if (data) {
+                                                if (platform.name !== "IE") {
+                                                    imageObject[imageIconPath] = 'data:image/png;base64,' + LineageUtils.base64Encode({ "data": data });
+                                                } else {
+                                                    imageObject[imageIconPath] = imagePath;
+                                                }
+                                            }
+                                        });
+                                }
+                                if (_.keys(imageObject).indexOf(imageIconPath) === -1) {
+                                    getImageData({
+                                        "imagePath": imagePath,
+                                        "imageIconPath": imageIconPath
+                                    });
+                                }
+
+                                if (_.isUndefined(imageObject[imageIconPath])) {
+                                    // before img success
+                                    imageObject[imageIconPath] = [d3.select(that)];
+                                } else if (_.isArray(imageObject[imageIconPath])) {
+                                    // before img success
+                                    imageObject[imageIconPath].push(d3.select(that));
+                                } else {
+                                    d3.select(that).attr("xlink:href", imageObject[imageIconPath]);
+                                    return imageObject[imageIconPath];
+                                }
                             }
                         })
                         .attr("x", "4")
-                        .attr("y", currentNode ? "3" : "4")
-                        .attr("width", "40")
-                        .attr("height", "40")
-                        .on("error", function() {
-                            this.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', Utils.getEntityIconPath({ entityData: node, errorUrl: this.href.baseVal }));
-                        });
+                        .attr("y", currentNode ? "3" : "4").attr("width", "40")
+                        .attr("height", "40");
 
                     node.intersect = function(point) {
                         return dagreD3.intersect.circle(node, currentNode ? 24 : 21, point);
@@ -680,6 +761,7 @@ define(['require',
                             return;
                         }
                         that.$('svg').removeClass('hover');
+                        that.$('svg').removeClass('hover-active');
                         LineageUtils.onHoverFade({
                             opacity: 1,
                             selectedNode: d,
@@ -695,11 +777,18 @@ define(['require',
                             clearTimeout(waitForDoubleClick)
                             waitForDoubleClick = null;
                             tooltip.hide(d);
-                            Utils.setUrl({
-                                url: '#!/detailPage/' + d + '?tabActive=lineage',
-                                mergeBrowserUrl: false,
-                                trigger: true
-                            });
+                            if (that.guid == d) {
+                                Utils.notifyInfo({
+                                    html: true,
+                                    content: "You are already on " + "<b>" + that.entityName + "</b> detail page."
+                                });
+                            } else {
+                                Utils.setUrl({
+                                    url: '#!/detailPage/' + d + '?tabActive=lineage',
+                                    mergeBrowserUrl: false,
+                                    trigger: true
+                                });
+                            }
                         } else {
                             var currentEvent = d3.event
                             waitForDoubleClick = setTimeout(function() {
@@ -708,22 +797,24 @@ define(['require',
                                 $(el).find('circle').addClass('node-detail-highlight');
                                 that.updateRelationshipDetails({ guid: d });
                                 waitForDoubleClick = null;
-                            }, 150)
+                            }, 170)
                         }
                     });
 
                 svgGroup.selectAll("g.edgePath path.path").on('click', function(d) {
-                    var data = { obj: _.find(that.lineageData.relations, { "fromEntityId": d.v, "toEntityId": d.w }) },
-                        relationshipId = data.obj.relationshipId;
-                    require(['views/graph/PropagationPropertyModal'], function(PropagationPropertyModal) {
-                        var view = new PropagationPropertyModal({
-                            edgeInfo: data,
-                            relationshipId: relationshipId,
-                            lineageData: that.lineageData,
-                            apiGuid: that.apiGuid,
-                            detailPageFetchCollection: that.fetchCollection
+                    var data = { obj: _.find(that.lineageData.relations, { "fromEntityId": d.v, "toEntityId": d.w }) };
+                    if (data.obj) {
+                        var relationshipId = data.obj.relationshipId;
+                        require(['views/graph/PropagationPropertyModal'], function(PropagationPropertyModal) {
+                            var view = new PropagationPropertyModal({
+                                edgeInfo: data,
+                                relationshipId: relationshipId,
+                                lineageData: that.lineageData,
+                                apiGuid: that.apiGuid,
+                                detailPageFetchCollection: that.fetchCollection
+                            });
                         });
-                    });
+                    }
                 })
                 $('body').on('mouseover', '.d3-tip', function(el) {
                     that.activeTip = true;
@@ -739,6 +830,7 @@ define(['require',
                     guid: that.guid,
                     svg: that.$('svg'),
                     g: this.g,
+                    edgeEl: $('svg .edgePath'),
                     afterCenterZoomed: function(options) {
                         var newScale = options.newScale,
                             newTranslate = options.newTranslate;
@@ -747,43 +839,36 @@ define(['require',
                     }
                 }).init();
                 zoom.event(svg);
-                //svg.attr('height', this.g.graph().height * initialScale + 40);
                 if (platform.name === "IE") {
-                    this.IEGraphRenderDone = 0;
-                    this.$('svg .edgePath').each(function(argument) {
-                        var childNode = $(this).find('marker');
-                        $(this).find('marker').remove();
-                        var eleRef = this;
-                        ++that.IEGraphRenderDone;
-                        setTimeout(function(argument) {
-                            $(eleRef).find('defs').append(childNode);
-                            --that.IEGraphRenderDone;
-                            if (that.IEGraphRenderDone === 0) {
-                                this.$('.fontLoader').hide();
-                                this.$('svg').fadeTo(1000, 1)
-                            }
-                        }, 1000);
+                    LineageUtils.refreshGraphForIE({
+                        edgeEl: this.$('svg .edgePath')
                     });
                 }
                 LineageUtils.DragNode({
                     svg: this.svg,
                     g: this.g,
-                    guid: this.guid
+                    guid: this.guid,
+                    edgeEl: this.$('svg .edgePath')
                 }).init();
             },
             renderLineageTypeSearch: function() {
-                var that = this;
-                var lineageData = $.extend(true, {}, this.lineageData);
-                var data = [];
-
-                var typeStr = '<option></option>';
+                var that = this,
+                    lineageData = $.extend(true, {}, this.lineageData),
+                    data = [],
+                    typeStr = '<option></option>';
                 if (!_.isEmpty(lineageData)) {
                     _.each(lineageData.guidEntityMap, function(obj, index) {
+                        var nodeData = that.fromToNodeData[obj.guid];
+                        if (that.filterObj.isProcessHideCheck && nodeData && nodeData.isProcess) {
+                            return;
+                        } else if (that.filterObj.isDeletedEntityHideCheck && nodeData && nodeData.isDeleted) {
+                            return
+                        }
                         typeStr += '<option value="' + obj.guid + '">' + obj.attributes.name + '</option>';
                     });
                 }
-                that.ui.lineageTypeSearch.html(typeStr);
-                this.initilizelineageTypeSearch()
+                this.ui.lineageTypeSearch.html(typeStr);
+                this.initilizelineageTypeSearch();
             },
             initilizelineageTypeSearch: function() {
                 var that = this;
@@ -800,6 +885,7 @@ define(['require',
                         guid: selectedNode,
                         svg: $(that.svg[0]),
                         g: that.g,
+                        edgeEl: $('svg .edgePath'),
                         afterCenterZoomed: function(options) {
                             var newScale = options.newScale,
                                 newTranslate = options.newTranslate;
@@ -870,6 +956,126 @@ define(['require',
                     "attributeDefs": attributeDefs,
                     "sortBy": false
                 }));
+            },
+            onClickSaveSvg: function(e, a) {
+                var that = this;
+                var loaderTargetDiv = $(e.currentTarget).find('>i');
+
+                if (loaderTargetDiv.hasClass('fa-refresh')) {
+                    Utils.notifyWarn({
+                        content: "Please wait while the lineage gets downloaded"
+                    });
+                    return false; // return if the lineage is not loaded.
+                }
+
+
+                that.toggleLoader(loaderTargetDiv);
+                Utils.notifyInfo({
+                    content: "Lineage will be downloaded in a moment."
+                });
+                setTimeout(function() {
+                    var svg = that.$('svg')[0],
+                        svgClone = svg.cloneNode(true),
+                        scaleFactor = 1,
+                        svgWidth = that.$('svg').width(),
+                        svgHeight = that.$('svg').height();
+                    if (platform.name === "Firefox") {
+                        svgClone.setAttribute('width', svgWidth);
+                        svgClone.setAttribute('height', svgHeight);
+                    }
+                    $('.hidden-svg').html(svgClone);
+                    $(svgClone).find('>g').attr("transform", "scale(" + scaleFactor + ")");
+                    var canvasOffset = { x: 150, y: 150 },
+                        setWidth = (svgClone.getBBox().width + (canvasOffset.x)),
+                        setHeight = (svgClone.getBBox().height + (canvasOffset.y)),
+                        xAxis = svgClone.getBBox().x,
+                        yAxis = svgClone.getBBox().y;
+                    svgClone.attributes.viewBox.value = xAxis + "," + yAxis + "," + setWidth + "," + setHeight;
+
+                    var createCanvas = document.createElement('canvas');
+                    createCanvas.id = "canvas";
+                    createCanvas.style.display = 'none';
+
+                    var body = $('body').append(createCanvas),
+                        canvas = $('canvas')[0];
+                    canvas.width = (svgClone.getBBox().width * scaleFactor) + canvasOffset.x;
+                    canvas.height = (svgClone.getBBox().height * scaleFactor) + canvasOffset.y;
+
+                    var ctx = canvas.getContext('2d'),
+                        data = (new XMLSerializer()).serializeToString(svgClone),
+                        DOMURL = window.URL || window.webkitURL || window;
+
+                    ctx.fillStyle = "#FFFFFF";
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.strokeRect(0, 0, canvas.width, canvas.height);
+                    ctx.restore();
+
+                    var img = new Image(canvas.width, canvas.height);
+                    var svgBlob = new Blob([data], { type: 'image/svg+xml;base64' });
+                    if (platform.name === "Safari") {
+                        svgBlob = new Blob([data], { type: 'image/svg+xml' });
+                    }
+                    var url = DOMURL.createObjectURL(svgBlob);
+
+                    img.onload = function() {
+                        try {
+                            var a = document.createElement("a"),
+                                entityAttributes = that.entity && that.entity.attributes;
+                            a.download = ((entityAttributes && (entityAttributes.qualifiedName || entityAttributes.name) || "lineage_export") + ".png");
+                            document.body.appendChild(a);
+                            ctx.drawImage(img, 50, 50, canvas.width, canvas.height);
+                            canvas.toBlob(function(blob) {
+                                if (!blob) {
+                                    Utils.notifyError({
+                                        content: "There was an error in downloading Lineage!"
+                                    });
+                                    that.toggleLoader(loaderTargetDiv);
+                                    return;
+                                }
+                                a.href = DOMURL.createObjectURL(blob);
+                                if (blob.size > 10000000) {
+                                    Utils.notifyWarn({
+                                        content: "The Image size is huge, please open the image in a browser!"
+                                    });
+                                }
+                                a.click();
+                                that.toggleLoader(loaderTargetDiv);
+                                if (platform.name === 'Safari') {
+                                    LineageUtils.refreshGraphForSafari({
+                                        edgeEl: that.$('svg g.node')
+                                    });
+                                }
+                            }, 'image/png');
+                            $('.hidden-svg').html('');
+                            createCanvas.remove();
+
+                        } catch (err) {
+                            Utils.notifyError({
+                                content: "There was an error in downloading Lineage!"
+                            });
+                            that.toggleLoader(loaderTargetDiv);
+                        }
+
+                    };
+                    img.src = url;
+
+                }, 0)
+            },
+            toggleLoader: function(element) {
+                if ((element).hasClass('fa-camera')) {
+                    (element).removeClass('fa-camera').addClass("fa-spin-custom fa-refresh");
+                } else {
+                    (element).removeClass("fa-spin-custom fa-refresh").addClass('fa-camera');
+                }
+            },
+            onClickResetLineage: function() {
+                this.createGraph()
+            },
+            toggleDisableState: function(options) {
+                var el = options.el;
+                if (el && el.prop) {
+                    el.prop("disabled", !el.prop("disabled"));
+                }
             }
         });
     return LineageLayoutView;

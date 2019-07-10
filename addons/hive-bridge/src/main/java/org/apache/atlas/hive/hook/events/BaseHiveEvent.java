@@ -18,6 +18,7 @@
 
 package org.apache.atlas.hive.hook.events;
 
+import com.google.common.collect.ImmutableMap;
 import org.apache.atlas.hive.hook.AtlasHiveHookContext;
 import org.apache.atlas.hive.hook.HiveHook.PreprocessAction;
 import org.apache.atlas.model.instance.AtlasEntity;
@@ -27,6 +28,8 @@ import org.apache.atlas.model.instance.AtlasEntity.AtlasEntityExtInfo;
 import org.apache.atlas.model.instance.AtlasObjectId;
 import org.apache.atlas.model.instance.AtlasStruct;
 import org.apache.atlas.model.notification.HookNotification;
+import org.apache.atlas.repository.Constants;
+import org.apache.atlas.type.AtlasTypeUtil;
 import org.apache.atlas.utils.HdfsNameServiceResolver;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
@@ -37,11 +40,10 @@ import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.Order;
 import org.apache.hadoop.hive.metastore.api.SerDeInfo;
 import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
-import org.apache.hadoop.hive.ql.hooks.Entity;
-import org.apache.hadoop.hive.ql.hooks.HookContext;
+import org.apache.hadoop.hive.metastore.utils.SecurityUtils;
+import org.apache.hadoop.hive.ql.hooks.*;
 import org.apache.hadoop.hive.ql.hooks.LineageInfo.BaseColumnInfo;
 import org.apache.hadoop.hive.ql.hooks.LineageInfo.DependencyKey;
-import org.apache.hadoop.hive.ql.hooks.WriteEntity;
 import org.apache.hadoop.hive.ql.metadata.Hive;
 import org.apache.hadoop.hive.ql.metadata.Table;
 import org.apache.hadoop.hive.ql.plan.HiveOperation;
@@ -50,6 +52,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -68,24 +71,27 @@ import static org.apache.atlas.hive.hook.AtlasHiveHookContext.QNAME_SEP_PROCESS;
 public abstract class BaseHiveEvent {
     private static final Logger LOG = LoggerFactory.getLogger(BaseHiveEvent.class);
 
-    public static final String HIVE_TYPE_DB             = "hive_db";
-    public static final String HIVE_TYPE_TABLE          = "hive_table";
-    public static final String HIVE_TYPE_STORAGEDESC    = "hive_storagedesc";
-    public static final String HIVE_TYPE_COLUMN         = "hive_column";
-    public static final String HIVE_TYPE_PROCESS        = "hive_process";
-    public static final String HIVE_TYPE_COLUMN_LINEAGE = "hive_column_lineage";
-    public static final String HIVE_TYPE_SERDE          = "hive_serde";
-    public static final String HIVE_TYPE_ORDER          = "hive_order";
-    public static final String HDFS_TYPE_PATH           = "hdfs_path";
-    public static final String HBASE_TYPE_TABLE         = "hbase_table";
-    public static final String HBASE_TYPE_NAMESPACE     = "hbase_namespace";
-    public static final String AWS_S3_BUCKET            = "aws_s3_bucket";
-    public static final String AWS_S3_PSEUDO_DIR        = "aws_s3_pseudo_dir";
-    public static final String AWS_S3_OBJECT            = "aws_s3_object";
+    public static final String HIVE_TYPE_DB                        = "hive_db";
+    public static final String HIVE_TYPE_TABLE                     = "hive_table";
+    public static final String HIVE_TYPE_STORAGEDESC               = "hive_storagedesc";
+    public static final String HIVE_TYPE_COLUMN                    = "hive_column";
+    public static final String HIVE_TYPE_PROCESS                   = "hive_process";
+    public static final String HIVE_TYPE_COLUMN_LINEAGE            = "hive_column_lineage";
+    public static final String HIVE_TYPE_SERDE                     = "hive_serde";
+    public static final String HIVE_TYPE_ORDER                     = "hive_order";
+    public static final String HIVE_TYPE_PROCESS_EXECUTION         = "hive_process_execution";
+    public static final String HIVE_DB_DDL                         = "hive_db_ddl";
+    public static final String HIVE_TABLE_DDL                      = "hive_table_ddl";
+    public static final String HDFS_TYPE_PATH                      = "hdfs_path";
+    public static final String HBASE_TYPE_TABLE                    = "hbase_table";
+    public static final String HBASE_TYPE_NAMESPACE                = "hbase_namespace";
+    public static final String AWS_S3_BUCKET                       = "aws_s3_bucket";
+    public static final String AWS_S3_PSEUDO_DIR                   = "aws_s3_pseudo_dir";
+    public static final String AWS_S3_OBJECT                       = "aws_s3_object";
 
-    public static final String SCHEME_SEPARATOR         = "://";
-    public static final String S3_SCHEME                = "s3" + SCHEME_SEPARATOR;
-    public static final String S3A_SCHEME               = "s3a" + SCHEME_SEPARATOR;
+    public static final String SCHEME_SEPARATOR                    = "://";
+    public static final String S3_SCHEME                           = "s3" + SCHEME_SEPARATOR;
+    public static final String S3A_SCHEME                          = "s3a" + SCHEME_SEPARATOR;
 
     public static final String ATTRIBUTE_QUALIFIED_NAME            = "qualifiedName";
     public static final String ATTRIBUTE_NAME                      = "name";
@@ -127,6 +133,8 @@ public abstract class BaseHiveEvent {
     public static final String ATTRIBUTE_START_TIME                = "startTime";
     public static final String ATTRIBUTE_USER_NAME                 = "userName";
     public static final String ATTRIBUTE_QUERY_TEXT                = "queryText";
+    public static final String ATTRIBUTE_PROCESS                   = "process";
+    public static final String ATTRIBUTE_PROCESS_EXECUTIONS        = "processExecutions";
     public static final String ATTRIBUTE_QUERY_ID                  = "queryId";
     public static final String ATTRIBUTE_QUERY_PLAN                = "queryPlan";
     public static final String ATTRIBUTE_END_TIME                  = "endTime";
@@ -140,6 +148,10 @@ public abstract class BaseHiveEvent {
     public static final String ATTRIBUTE_NAMESPACE                 = "namespace";
     public static final String ATTRIBUTE_OBJECT_PREFIX             = "objectPrefix";
     public static final String ATTRIBUTE_BUCKET                    = "bucket";
+    public static final String ATTRIBUTE_HOSTNAME                  = "hostName";
+    public static final String ATTRIBUTE_EXEC_TIME                 = "execTime";
+    public static final String ATTRIBUTE_DDL_QUERIES               = "ddlQueries";
+    public static final String ATTRIBUTE_SERVICE_TYPE              = "serviceType";
 
     public static final String HBASE_STORAGE_HANDLER_CLASS         = "org.apache.hadoop.hive.hbase.HBaseStorageHandler";
     public static final String HBASE_DEFAULT_NAMESPACE             = "default";
@@ -147,6 +159,7 @@ public abstract class BaseHiveEvent {
     public static final String HBASE_PARAM_TABLE_NAME              = "hbase.table.name";
     public static final long   MILLIS_CONVERT_FACTOR               = 1000;
     public static final String HDFS_PATH_PREFIX                    = "hdfs://";
+    public static final String EMPTY_ATTRIBUTE_VALUE = "";
 
     public static final Map<Integer, String> OWNER_TYPE_TO_ENUM_VALUE = new HashMap<>();
 
@@ -238,17 +251,31 @@ public abstract class BaseHiveEvent {
 
         switch (entity.getType()) {
             case DATABASE: {
-                Database db = getHive().getDatabase(entity.getDatabase().getName());
+                if (!context.getIgnoreDummyDatabaseName().contains(entity.getDatabase().getName())) {
+                    Database db = getHive().getDatabase(entity.getDatabase().getName());
 
-                ret = toDbEntity(db);
+                    ret = toDbEntity(db);
+                }
             }
             break;
 
             case TABLE:
             case PARTITION: {
-                Table table = getHive().getTable(entity.getTable().getDbName(), entity.getTable().getTableName());
+                String  dbName    = entity.getTable().getDbName();
+                String  tableName = entity.getTable().getTableName();
+                boolean skipTable = StringUtils.isNotEmpty(context.getIgnoreValuesTmpTableNamePrefix()) && tableName.toLowerCase().startsWith(context.getIgnoreValuesTmpTableNamePrefix());
 
-                ret = toTableEntity(table, entityExtInfo);
+                if (!skipTable) {
+                    skipTable = context.getIgnoreDummyTableName().contains(tableName) && context.getIgnoreDummyDatabaseName().contains(dbName);
+                }
+
+                if (!skipTable) {
+                    Table table = getHive().getTable(dbName, tableName);
+
+                    ret = toTableEntity(table, entityExtInfo);
+                } else {
+                    context.registerSkippedEntity(entity);
+                }
             }
             break;
 
@@ -328,7 +355,8 @@ public abstract class BaseHiveEvent {
     }
 
     protected AtlasEntity toTableEntity(Table table, AtlasEntityExtInfo entityExtInfo) throws Exception {
-        AtlasEntity dbEntity = toDbEntity(getHive().getDatabase(table.getDbName()));
+        Database    db       = getDatabases(table.getDbName());
+        AtlasEntity dbEntity = toDbEntity(db);
 
         if (entityExtInfo != null) {
             if (dbEntity != null) {
@@ -451,7 +479,7 @@ public abstract class BaseHiveEvent {
             ret.setAttribute(ATTRIBUTE_NUM_BUCKETS, sd.getNumBuckets());
             ret.setAttribute(ATTRIBUTE_STORED_AS_SUB_DIRECTORIES, sd.isStoredAsSubDirectories());
 
-            if (sd.getBucketCols().size() > 0) {
+            if (sd.getBucketCols() != null && sd.getBucketCols().size() > 0) {
                 ret.setAttribute(ATTRIBUTE_BUCKET_COLS, sd.getBucketCols());
             }
 
@@ -488,36 +516,38 @@ public abstract class BaseHiveEvent {
     }
 
     protected List<AtlasEntity> getColumnEntities(AtlasObjectId tableId, Table table, List<FieldSchema> fieldSchemas) {
-        List<AtlasEntity> ret          = new ArrayList<>();
-        boolean           isKnownTable = tableId.getGuid() == null;
+        List<AtlasEntity> ret            = new ArrayList<>();
+        boolean           isKnownTable   = tableId.getGuid() == null;
+        int               columnPosition = 0;
 
-        int columnPosition = 0;
-        for (FieldSchema fieldSchema : fieldSchemas) {
-            String      colQualifiedName = getQualifiedName(table, fieldSchema);
-            AtlasEntity column           = context.getEntity(colQualifiedName);
+        if (CollectionUtils.isNotEmpty(fieldSchemas)) {
+            for (FieldSchema fieldSchema : fieldSchemas) {
+                String      colQualifiedName = getQualifiedName(table, fieldSchema);
+                AtlasEntity column           = context.getEntity(colQualifiedName);
 
-            if (column == null) {
-                column = new AtlasEntity(HIVE_TYPE_COLUMN);
+                if (column == null) {
+                    column = new AtlasEntity(HIVE_TYPE_COLUMN);
 
-                // if column's table was sent in an earlier notification, set 'guid' to null - which will:
-                //  - result in this entity to be not included in 'referredEntities'
-                //  - cause Atlas server to resolve the entity by its qualifiedName
-                if (isKnownTable) {
-                    column.setGuid(null);
+                    // if column's table was sent in an earlier notification, set 'guid' to null - which will:
+                    //  - result in this entity to be not included in 'referredEntities'
+                    //  - cause Atlas server to resolve the entity by its qualifiedName
+                    if (isKnownTable) {
+                        column.setGuid(null);
+                    }
+
+                    column.setAttribute(ATTRIBUTE_TABLE, tableId);
+                    column.setAttribute(ATTRIBUTE_QUALIFIED_NAME, colQualifiedName);
+                    column.setAttribute(ATTRIBUTE_NAME, fieldSchema.getName());
+                    column.setAttribute(ATTRIBUTE_OWNER, table.getOwner());
+                    column.setAttribute(ATTRIBUTE_COL_TYPE, fieldSchema.getType());
+                    column.setAttribute(ATTRIBUTE_COL_POSITION, columnPosition++);
+                    column.setAttribute(ATTRIBUTE_COMMENT, fieldSchema.getComment());
+
+                    context.putEntity(colQualifiedName, column);
                 }
 
-                column.setAttribute(ATTRIBUTE_TABLE, tableId);
-                column.setAttribute(ATTRIBUTE_QUALIFIED_NAME, colQualifiedName);
-                column.setAttribute(ATTRIBUTE_NAME, fieldSchema.getName());
-                column.setAttribute(ATTRIBUTE_OWNER, table.getOwner());
-                column.setAttribute(ATTRIBUTE_COL_TYPE, fieldSchema.getType());
-                column.setAttribute(ATTRIBUTE_COL_POSITION, columnPosition++);
-                column.setAttribute(ATTRIBUTE_COMMENT, fieldSchema.getComment());
-
-                context.putEntity(colQualifiedName, column);
+                ret.add(column);
             }
-
-            ret.add(column);
         }
 
         return ret;
@@ -594,8 +624,7 @@ public abstract class BaseHiveEvent {
 
     protected AtlasEntity getHiveProcessEntity(List<AtlasEntity> inputs, List<AtlasEntity> outputs) throws Exception {
         AtlasEntity ret         = new AtlasEntity(HIVE_TYPE_PROCESS);
-        HookContext hookContext = getHiveContext();
-        String      queryStr    = hookContext.getQueryPlan().getQueryStr();
+        String      queryStr    = getQueryString();
 
         if (queryStr != null) {
             queryStr = queryStr.toLowerCase().trim();
@@ -605,50 +634,160 @@ public abstract class BaseHiveEvent {
         ret.setAttribute(ATTRIBUTE_INPUTS, getObjectIds(inputs));
         ret.setAttribute(ATTRIBUTE_OUTPUTS,  getObjectIds(outputs));
         ret.setAttribute(ATTRIBUTE_NAME, queryStr);
-        ret.setAttribute(ATTRIBUTE_OPERATION_TYPE, hookContext.getOperationName());
-        ret.setAttribute(ATTRIBUTE_START_TIME, hookContext.getQueryPlan().getQueryStartTime());
-        ret.setAttribute(ATTRIBUTE_END_TIME, System.currentTimeMillis());
-        ret.setAttribute(ATTRIBUTE_USER_NAME, getUserName());
-        ret.setAttribute(ATTRIBUTE_QUERY_TEXT, queryStr);
-        ret.setAttribute(ATTRIBUTE_QUERY_ID, hookContext.getQueryPlan().getQuery().getQueryId());
+        ret.setAttribute(ATTRIBUTE_OPERATION_TYPE, getOperationName());
+
+        // We are setting an empty value to these attributes, since now we have a new entity type called hive process
+        // execution which captures these values. We have to set empty values here because these attributes are
+        // mandatory attributes for hive process entity type.
+        ret.setAttribute(ATTRIBUTE_START_TIME, EMPTY_ATTRIBUTE_VALUE);
+        ret.setAttribute(ATTRIBUTE_END_TIME, EMPTY_ATTRIBUTE_VALUE);
+        ret.setAttribute(ATTRIBUTE_USER_NAME, EMPTY_ATTRIBUTE_VALUE);
+        ret.setAttribute(ATTRIBUTE_QUERY_TEXT, EMPTY_ATTRIBUTE_VALUE);
+        ret.setAttribute(ATTRIBUTE_QUERY_ID, EMPTY_ATTRIBUTE_VALUE);
         ret.setAttribute(ATTRIBUTE_QUERY_PLAN, "Not Supported");
         ret.setAttribute(ATTRIBUTE_RECENT_QUERIES, Collections.singletonList(queryStr));
-
         return ret;
+    }
+
+    protected AtlasEntity getHiveProcessExecutionEntity(AtlasEntity hiveProcess) throws Exception {
+        AtlasEntity ret         = new AtlasEntity(HIVE_TYPE_PROCESS_EXECUTION);
+        String      queryStr    = getQueryString();
+
+        if (queryStr != null) {
+            queryStr = queryStr.toLowerCase().trim();
+        }
+
+        Long endTime = System.currentTimeMillis();
+        ret.setAttribute(ATTRIBUTE_QUALIFIED_NAME, hiveProcess.getAttribute(ATTRIBUTE_QUALIFIED_NAME).toString() +
+                QNAME_SEP_PROCESS + getQueryStartTime().toString() +
+                QNAME_SEP_PROCESS + endTime.toString());
+        ret.setAttribute(ATTRIBUTE_NAME, queryStr + QNAME_SEP_PROCESS + getQueryStartTime().toString());
+        ret.setAttribute(ATTRIBUTE_START_TIME, getQueryStartTime());
+        ret.setAttribute(ATTRIBUTE_END_TIME, endTime);
+        ret.setAttribute(ATTRIBUTE_USER_NAME, getUserName());
+        ret.setAttribute(ATTRIBUTE_QUERY_TEXT, queryStr);
+        ret.setAttribute(ATTRIBUTE_QUERY_ID, getQueryId());
+        ret.setAttribute(ATTRIBUTE_QUERY_PLAN, "Not Supported");
+        ret.setAttribute(ATTRIBUTE_HOSTNAME, getContext().getHostName());
+        ret.setRelationshipAttribute(ATTRIBUTE_PROCESS, AtlasTypeUtil.toAtlasRelatedObjectId(hiveProcess));
+        return ret;
+    }
+
+    protected AtlasEntity createHiveDDLEntity(AtlasEntity dbOrTable) {
+        return createHiveDDLEntity(dbOrTable, false);
+    }
+
+    protected AtlasEntity createHiveDDLEntity(AtlasEntity dbOrTable, boolean excludeEntityGuid) {
+        AtlasObjectId objId   = BaseHiveEvent.getObjectId(dbOrTable);
+        AtlasEntity   hiveDDL = null;
+
+        if (excludeEntityGuid) {
+            objId.setGuid(null);
+        }
+
+        if (StringUtils.equals(objId.getTypeName(), HIVE_TYPE_DB)) {
+            hiveDDL = new AtlasEntity(HIVE_DB_DDL, ATTRIBUTE_DB, objId);
+        } else if (StringUtils.equals(objId.getTypeName(), HIVE_TYPE_TABLE)) {
+            hiveDDL = new AtlasEntity(HIVE_TABLE_DDL, ATTRIBUTE_TABLE, objId);
+        }
+
+        if (hiveDDL != null) {
+            hiveDDL.setAttribute(ATTRIBUTE_SERVICE_TYPE, "hive");
+            hiveDDL.setAttribute(ATTRIBUTE_EXEC_TIME, getQueryStartTime());
+            hiveDDL.setAttribute(ATTRIBUTE_QUERY_TEXT, getQueryString());
+            hiveDDL.setAttribute(ATTRIBUTE_USER_NAME, getUserName());
+            hiveDDL.setAttribute(ATTRIBUTE_NAME, getQueryString());
+            hiveDDL.setAttribute(ATTRIBUTE_QUALIFIED_NAME, dbOrTable.getAttribute(ATTRIBUTE_QUALIFIED_NAME).toString()
+                                                           + QNAME_SEP_PROCESS + getQueryStartTime().toString());
+        }
+
+        return hiveDDL;
     }
 
     protected String getClusterName() {
         return context.getClusterName();
     }
 
+    protected Database getDatabases(String dbName) throws Exception {
+        return context.isMetastoreHook() ? context.getMetastoreHandler().get_database(dbName) :
+                                           context.getHive().getDatabase(dbName);
+    }
+
     protected Hive getHive() {
         return context.getHive();
     }
 
-    protected HookContext getHiveContext() {
-        return context.getHiveContext();
+    protected Set<ReadEntity> getInputs() {
+        return context != null ? context.getInputs() : Collections.emptySet();
+    }
+
+    protected Set<WriteEntity> getOutputs() {
+        return context != null ? context.getOutputs() : Collections.emptySet();
+    }
+
+    protected LineageInfo getLineageInfo() {
+        return context != null ? context.getLineageInfo() : null;
+    }
+
+    protected String getQueryString() {
+        return isHiveContextValid() ? context.getHiveContext().getQueryPlan().getQueryStr() : null;
+    }
+
+    protected String getOperationName() {
+        return isHiveContextValid() ? context.getHiveContext().getOperationName() : null;
+    }
+
+    protected String getHiveUserName() {
+        return isHiveContextValid() ? context.getHiveContext().getUserName() : null;
+    }
+
+    protected UserGroupInformation getUgi() {
+        return isHiveContextValid() ? context.getHiveContext().getUgi() : null;
+    }
+
+    protected Long getQueryStartTime() {
+        return isHiveContextValid() ? context.getHiveContext().getQueryPlan().getQueryStartTime() : System.currentTimeMillis();
+    }
+
+    protected String getQueryId() {
+        return isHiveContextValid() ? context.getHiveContext().getQueryPlan().getQueryId() : null;
+    }
+
+    private boolean isHiveContextValid() {
+        return context != null && context.getHiveContext() != null;
     }
 
     protected String getUserName() {
-        String ret = getHiveContext().getUserName();
+        String               ret = null;
+        UserGroupInformation ugi = null;
 
-        if (StringUtils.isEmpty(ret)) {
-            UserGroupInformation ugi = getHiveContext().getUgi();
-
-            if (ugi != null) {
-                ret = ugi.getShortUserName();
+        if (context.isMetastoreHook()) {
+            try {
+                ugi = SecurityUtils.getUGI();
+            } catch (Exception e) {
+                //do nothing
             }
+        } else {
+            ret = getHiveUserName();
 
             if (StringUtils.isEmpty(ret)) {
-                try {
-                    ret = UserGroupInformation.getCurrentUser().getShortUserName();
-                } catch (IOException e) {
-                    LOG.warn("Failed for UserGroupInformation.getCurrentUser() ", e);
-                    ret = System.getProperty("user.name");
-                }
+                ugi = getUgi();
             }
         }
 
+        if (ugi != null) {
+            ret = ugi.getShortUserName();
+        }
+
+        if (StringUtils.isEmpty(ret)) {
+            try {
+                ret = UserGroupInformation.getCurrentUser().getShortUserName();
+            } catch (IOException e) {
+                LOG.warn("Failed for UserGroupInformation.getCurrentUser() ", e);
+
+                ret = System.getProperty("user.name");
+            }
+        }
 
         return ret;
     }
@@ -757,7 +896,7 @@ public abstract class BaseHiveEvent {
             operation == HiveOperation.CREATEVIEW ||
             operation == HiveOperation.ALTERVIEW_AS ||
             operation == HiveOperation.ALTERTABLE_LOCATION) {
-            List<? extends Entity> sortedEntities = new ArrayList<>(getHiveContext().getOutputs());
+            List<? extends Entity> sortedEntities = new ArrayList<>(getOutputs());
 
             Collections.sort(sortedEntities, entityComparator);
 
@@ -774,15 +913,23 @@ public abstract class BaseHiveEvent {
             }
         }
 
-        StringBuilder sb = new StringBuilder(getHiveContext().getOperationName());
+        String qualifiedName = null;
+        String operationName = getOperationName();
 
-        boolean ignoreHDFSPaths = ignoreHDFSPathsinProcessQualifiedName();
+        if (operationName != null) {
+            StringBuilder sb = new StringBuilder(operationName);
 
-        addToProcessQualifiedName(sb, getHiveContext().getInputs(), ignoreHDFSPaths);
-        sb.append("->");
-        addToProcessQualifiedName(sb, getHiveContext().getOutputs(), ignoreHDFSPaths);
+            boolean ignoreHDFSPaths = ignoreHDFSPathsinProcessQualifiedName();
 
-        return sb.toString();
+            addToProcessQualifiedName(sb, getInputs(), ignoreHDFSPaths);
+            sb.append("->");
+            addToProcessQualifiedName(sb, getOutputs(), ignoreHDFSPaths);
+
+            qualifiedName = sb.toString();
+        }
+
+
+        return qualifiedName;
     }
 
     protected AtlasEntity toReferencedHBaseTable(Table table, AtlasEntitiesWithExtInfo entities) {
@@ -836,9 +983,9 @@ public abstract class BaseHiveEvent {
         switch (context.getHiveOperation()) {
             case LOAD:
             case IMPORT:
-                return hasPartitionEntity(getHiveContext().getOutputs());
+                return hasPartitionEntity(getOutputs());
             case EXPORT:
-                return hasPartitionEntity(getHiveContext().getInputs());
+                return hasPartitionEntity(getInputs());
             case QUERY:
                 return true;
         }
@@ -1005,5 +1152,9 @@ public abstract class BaseHiveEvent {
         public String getHbaseTableName() {
             return hbaseTableName;
         }
+    }
+
+    public static Table toTable(org.apache.hadoop.hive.metastore.api.Table table) {
+        return new Table(table);
     }
 }

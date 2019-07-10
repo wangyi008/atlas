@@ -28,8 +28,13 @@ import org.apache.atlas.model.impexp.AtlasImportRequest;
 import org.apache.atlas.model.instance.AtlasEntity;
 import org.apache.atlas.model.instance.AtlasEntityHeader;
 import org.apache.atlas.model.instance.AtlasRelatedObjectId;
+import org.apache.atlas.model.instance.EntityMutationResponse;
+import org.apache.atlas.repository.Constants;
 import org.apache.atlas.repository.graph.AtlasGraphProvider;
+import org.apache.atlas.repository.graphdb.AtlasVertex;
 import org.apache.atlas.repository.store.graph.AtlasEntityStore;
+import org.apache.atlas.repository.store.graph.v2.AtlasEntityStream;
+import org.apache.atlas.repository.store.graph.v2.AtlasGraphUtilsV2;
 import org.apache.atlas.runner.LocalSolrRunner;
 import org.apache.atlas.store.AtlasTypeDefStore;
 import org.apache.atlas.type.AtlasClassificationType;
@@ -63,6 +68,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 
@@ -253,6 +259,36 @@ public class ImportServiceTest extends ExportImportTestBase {
         assertFalse(entity.getClassifications().get(1).getEntityGuid().equalsIgnoreCase(entity.getGuid()));
     }
 
+    @Test(dataProvider = "stocks-legacy")
+    public void importExistingTopLevelEntity(ZipSource zipSource) throws IOException, AtlasBaseException{
+        loadBaseModel();
+        loadFsModel();
+        loadHiveModel();
+
+        AtlasEntity db = new AtlasEntity("hive_db", "name", "stocks" );
+        db.setAttribute("clusterName", "cl1");
+        db.setAttribute("qualifiedName", "stocks@cl1");
+
+        AtlasEntity.AtlasEntitiesWithExtInfo  entitiesWithExtInfo = new AtlasEntity.AtlasEntitiesWithExtInfo();
+        entitiesWithExtInfo.addEntity(db);
+        AtlasEntityStream entityStream = new AtlasEntityStream(entitiesWithExtInfo);
+
+        EntityMutationResponse createResponse = entityStore.createOrUpdate(entityStream, false);
+        assertNotNull(createResponse);
+
+        String preImportGuid = createResponse.getCreatedEntities().get(0).getGuid();
+        runImportWithNoParameters(importService, zipSource);
+
+        AtlasVertex v = AtlasGraphUtilsV2.findByGuid("886c5e9c-3ac6-40be-8201-fb0cebb64783");
+        assertNotNull(v);
+
+        String postImportGuid = AtlasGraphUtilsV2.getIdFromVertex(v);
+
+        assertNotEquals(preImportGuid, postImportGuid);
+        String historicalGuids = v.getProperty(Constants.HISTORICAL_GUID_PROPERTY_KEY, String.class);
+        assertTrue(historicalGuids.contains(preImportGuid));
+    }
+
     @DataProvider(name = "stocks-glossary")
     public static Object[][] getDataFromGlossary(ITestContext context) throws IOException, AtlasBaseException {
         return getZipSource("stocks-glossary.zip");
@@ -422,10 +458,6 @@ public class ImportServiceTest extends ExportImportTestBase {
         assertEquals(importTransforms.getTransforms().get("hive_table").get("qualifiedName").size(), 2);
     }
 
-    @Test(dataProvider = "empty-zip", expectedExceptions = AtlasBaseException.class)
-    public void importEmptyZip(ZipSource zipSource) {
-
-    }
 
     @Test(expectedExceptions = AtlasBaseException.class)
     public void importEmptyZip() throws IOException, AtlasBaseException {

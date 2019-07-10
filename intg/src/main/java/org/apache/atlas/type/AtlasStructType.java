@@ -33,10 +33,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
-import static org.apache.atlas.model.TypeCategory.*;
-import static org.apache.atlas.model.typedef.AtlasStructDef.AtlasConstraintDef.CONSTRAINT_PARAM_ATTRIBUTE;
-import static org.apache.atlas.model.typedef.AtlasStructDef.AtlasConstraintDef.CONSTRAINT_TYPE_INVERSE_REF;
-import static org.apache.atlas.model.typedef.AtlasStructDef.AtlasConstraintDef.CONSTRAINT_TYPE_OWNED_REF;
+import static org.apache.atlas.model.TypeCategory.OBJECT_ID_TYPE;
+import static org.apache.atlas.model.typedef.AtlasStructDef.AtlasConstraintDef.*;
 
 /**
  * class that implements behaviour of a struct-type.
@@ -99,6 +97,7 @@ public class AtlasStructType extends AtlasType {
 
                 arrayType.setMinCount(attributeDef.getValuesMinCount());
                 arrayType.setMaxCount(attributeDef.getValuesMaxCount());
+                arrayType.setCardinality(cardinality);
             }
 
             //check if attribute type is not classification
@@ -708,6 +707,8 @@ public class AtlasStructType extends AtlasType {
         private String                         relationshipName;
         private String                         relationshipEdgeLabel;
         private AtlasRelationshipEdgeDirection relationshipEdgeDirection;
+        private boolean                        isLegacyAttribute;
+        private String                         indexFieldName;
 
         public AtlasAttribute(AtlasStructType definedInType, AtlasAttributeDef attrDef, AtlasType attributeType, String relationshipName, String relationshipLabel) {
             this.definedInType            = definedInType;
@@ -742,19 +743,19 @@ public class AtlasStructType extends AtlasType {
             this.inverseRefAttributeName   = inverseRefAttribute;
             this.relationshipEdgeDirection = AtlasRelationshipEdgeDirection.OUT;
 
-            switch (attributeType.getTypeCategory()) {
+            switch (this.attributeType.getTypeCategory()) {
                 case OBJECT_ID_TYPE:
                     isObjectRef = true;
                 break;
 
                 case MAP:
-                    AtlasMapType mapType = (AtlasMapType) attributeType;
+                    AtlasMapType mapType = (AtlasMapType) this.attributeType;
 
                     isObjectRef = mapType.getValueType().getTypeCategory() == OBJECT_ID_TYPE;
                 break;
 
                 case ARRAY:
-                    AtlasArrayType arrayType = (AtlasArrayType) attributeType;
+                    AtlasArrayType arrayType = (AtlasArrayType) this.attributeType;
 
                     isObjectRef = arrayType.getElementType().getTypeCategory() == OBJECT_ID_TYPE;
                 break;
@@ -814,6 +815,17 @@ public class AtlasStructType extends AtlasType {
         public void setRelationshipEdgeDirection(AtlasRelationshipEdgeDirection relationshipEdgeDirection) {
             this.relationshipEdgeDirection = relationshipEdgeDirection;
         }
+
+        public boolean isLegacyAttribute() { return isLegacyAttribute; }
+
+        public void setLegacyAttribute(boolean legacyAttribute) { isLegacyAttribute = legacyAttribute; }
+
+        public String getIndexFieldName() { return indexFieldName; }
+
+        public void setIndexFieldName(String indexFieldName) { this.indexFieldName = indexFieldName; }
+
+        public int getSearchWeight() { return attributeDef.getSearchWeight(); }
+
 
         public static String getEdgeLabel(String property) {
             return "__" + property;

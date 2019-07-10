@@ -135,9 +135,11 @@ public class Solr6Index implements IndexProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(Solr6Index.class);
 
-
     private static final String DEFAULT_ID_FIELD  = "id";
     private static final char   CHROOT_START_CHAR = '/';
+
+    private static Solr6Index instance = null;
+    public static final ConfigOption<Boolean> CREATE_SOLR_CLIENT_PER_REQUEST = new ConfigOption(SOLR_NS, "create-client-per-request", "when false, allows the sharing of solr client across other components.", org.janusgraph.diskstorage.configuration.ConfigOption.Type.LOCAL, true);
 
     private enum Mode {
         HTTP, CLOUD;
@@ -167,6 +169,7 @@ public class Solr6Index implements IndexProvider {
             .build();
 
     private static final Map<Geo, String> SPATIAL_PREDICATES = spatialPredicates();
+    private static boolean createSolrClientPerRequest;
 
     private final SolrClient solrClient;
     private final Configuration configuration;
@@ -177,6 +180,7 @@ public class Solr6Index implements IndexProvider {
     private final int batchSize;
     private final boolean waitSearcher;
     private final boolean kerberosEnabled;
+
 
     public Solr6Index(final Configuration config) throws BackendException {
         // Add Kerberos-enabled SolrHttpClientBuilder
@@ -200,40 +204,88 @@ public class Solr6Index implements IndexProvider {
             logger.debug("KERBEROS_ENABLED name is " + KERBEROS_ENABLED.getName() + " and it is" + (KERBEROS_ENABLED.isOption() ? " " : " not") + " an option.");
             logger.debug("KERBEROS_ENABLED type is " + KERBEROS_ENABLED.getType().name());
         }
+
+        solrClient = createSolrClient();
+        createSolrClientPerRequest = config.get(CREATE_SOLR_CLIENT_PER_REQUEST);
+        if(createSolrClientPerRequest) {
+            logger.info("A new Solr Client will be created for direct interation with SOLR.");
+        } else {
+            logger.info("Solr Client will be shared for direct interation with SOLR.");
+        }
+        Solr6Index.instance = this;
+    }
+
+    public static SolrClient getSolrClient() {
+        if (Solr6Index.instance != null) {
+            if (createSolrClientPerRequest) {
+                logger.debug("Creating a new Solr Client.");
+                return Solr6Index.instance.createSolrClient();
+            } else {
+                logger.debug("Returning the solr client owned by Solr6Index.");
+                return Solr6Index.instance.solrClient;
+            }
+        } else {
+            logger.debug(" No Solr6Index available. Will return null");
+            return null;
+        }
+    }
+
+    public static void releaseSolrClient(SolrClient solrClient) {
+        if(createSolrClientPerRequest) {
+            if (solrClient != null) {
+                try {
+                    solrClient.close();
+
+                    if(logger.isDebugEnabled()) {
+                        logger.debug("Closed the solr client successfully.");
+                    }
+                } catch (IOException excp) {
+                    logger.warn("Failed to close SolrClient.", excp);
+                }
+            }
+        } else {
+            if(logger.isDebugEnabled()) {
+                logger.debug("Ignoring the closing of solr client as it is owned by Solr6Index.");
+            }
+        }
+    }
+
+    private SolrClient createSolrClient() {
         final ModifiableSolrParams clientParams = new ModifiableSolrParams();
+        SolrClient solrClient = null;
+
+        Mode mode = Mode.parse(configuration.get(SOLR_MODE));
         switch (mode) {
             case CLOUD:
-                /* ATLAS-2920: Update JanusGraph Solr clients to use all zookeeper entries – start */
-                final List<String> zookeeperUrls = getZookeeperURLs(config);
-                /* ATLAS-2920: end */
                 final CloudSolrClient cloudServer = new CloudSolrClient.Builder()
                         .withLBHttpSolrClientBuilder(
                                 new LBHttpSolrClient.Builder()
                                         .withHttpSolrClientBuilder(new HttpSolrClient.Builder().withInvariantParams(clientParams))
-                                        .withBaseSolrUrls(config.get(HTTP_URLS))
+                                        .withBaseSolrUrls(configuration.get(HTTP_URLS))
                         )
-                        .withZkHost(zookeeperUrls)
+                        .withZkHost(getZookeeperURLs(configuration))
                         .sendUpdatesOnlyToShardLeaders()
                         .build();
                 cloudServer.connect();
                 solrClient = cloudServer;
+                logger.info("Created solr client using Cloud based configuration.");
                 break;
             case HTTP:
-                clientParams.add(HttpClientUtil.PROP_ALLOW_COMPRESSION, config.get(HTTP_ALLOW_COMPRESSION).toString());
-                clientParams.add(HttpClientUtil.PROP_CONNECTION_TIMEOUT, config.get(HTTP_CONNECTION_TIMEOUT).toString());
-                clientParams.add(HttpClientUtil.PROP_MAX_CONNECTIONS_PER_HOST, config.get(HTTP_MAX_CONNECTIONS_PER_HOST).toString());
-                clientParams.add(HttpClientUtil.PROP_MAX_CONNECTIONS, config.get(HTTP_GLOBAL_MAX_CONNECTIONS).toString());
+                clientParams.add(HttpClientUtil.PROP_ALLOW_COMPRESSION, configuration.get(HTTP_ALLOW_COMPRESSION).toString());
+                clientParams.add(HttpClientUtil.PROP_CONNECTION_TIMEOUT, configuration.get(HTTP_CONNECTION_TIMEOUT).toString());
+                clientParams.add(HttpClientUtil.PROP_MAX_CONNECTIONS_PER_HOST, configuration.get(HTTP_MAX_CONNECTIONS_PER_HOST).toString());
+                clientParams.add(HttpClientUtil.PROP_MAX_CONNECTIONS, configuration.get(HTTP_GLOBAL_MAX_CONNECTIONS).toString());
                 final HttpClient client = HttpClientUtil.createClient(clientParams);
                 solrClient = new LBHttpSolrClient.Builder()
                         .withHttpClient(client)
-                        .withBaseSolrUrls(config.get(HTTP_URLS))
+                        .withBaseSolrUrls(configuration.get(HTTP_URLS))
                         .build();
-
-
+                logger.info("Created solr client using HTTP based configuration.");
                 break;
             default:
                 throw new IllegalArgumentException("Unsupported Solr operation mode: " + mode);
         }
+        return solrClient;
     }
 
     private void configureSolrClientsForKerberos() throws PermanentBackendException {
@@ -1146,7 +1198,7 @@ public class Solr6Index implements IndexProvider {
     }
 
     /* ATLAS-2920: Update JanusGraph Solr clients to use all zookeeper entries – start */
-    private List<String> getZookeeperURLs(Configuration config) {
+    private static List<String> getZookeeperURLs(Configuration config) {
         List<String> ret     = null;
         String[]     zkHosts = config.get(ZOOKEEPER_URLS);
 

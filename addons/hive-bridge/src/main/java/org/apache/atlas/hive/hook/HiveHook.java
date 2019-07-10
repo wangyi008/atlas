@@ -26,12 +26,15 @@ import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.hive.ql.hooks.ExecuteWithHookContext;
 import org.apache.hadoop.hive.ql.hooks.HookContext;
+import org.apache.hadoop.hive.ql.parse.SemanticAnalyzer;
 import org.apache.hadoop.hive.ql.plan.HiveOperation;
 import org.apache.hadoop.hive.shims.Utils;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -45,7 +48,6 @@ import java.util.regex.Pattern;
 import static org.apache.atlas.hive.hook.events.BaseHiveEvent.ATTRIBUTE_QUALIFIED_NAME;
 import static org.apache.atlas.hive.hook.events.BaseHiveEvent.HIVE_TYPE_DB;
 import static org.apache.atlas.hive.hook.events.BaseHiveEvent.HIVE_TYPE_TABLE;
-
 
 public class HiveHook extends AtlasHook implements ExecuteWithHookContext {
     private static final Logger LOG = LoggerFactory.getLogger(HiveHook.class);
@@ -66,6 +68,7 @@ public class HiveHook extends AtlasHook implements ExecuteWithHookContext {
     public static final String HOOK_HIVE_TABLE_CACHE_SIZE                                = CONF_PREFIX + "hive_table.cache.size";
 
     public static final String DEFAULT_CLUSTER_NAME = "primary";
+    public static final String DEFAULT_HOST_NAME = "localhost";
 
     private static final Map<String, HiveOperation> OPERATION_MAP = new HashMap<>();
 
@@ -81,8 +84,12 @@ public class HiveHook extends AtlasHook implements ExecuteWithHookContext {
     private static final List<Pattern>                 hiveTablesToIgnore = new ArrayList<>();
     private static final List<Pattern>                 hiveTablesToPrune  = new ArrayList<>();
     private static final Map<String, PreprocessAction> hiveTablesCache;
+    private static final List                          ignoreDummyDatabaseName;
+    private static final List                          ignoreDummyTableName;
+    private static final String                        ignoreValuesTmpTableNamePrefix;
 
     private static HiveHookObjectNamesCache knownObjects = null;
+    private static String hostName;
 
     static {
         for (HiveOperation hiveOperation : HiveOperation.values()) {
@@ -134,6 +141,23 @@ public class HiveHook extends AtlasHook implements ExecuteWithHookContext {
         }
 
         knownObjects = nameCacheEnabled ? new HiveHookObjectNamesCache(nameCacheDatabaseMaxCount, nameCacheTableMaxCount, nameCacheRebuildIntervalSeconds) : null;
+
+        List<String> defaultDummyDatabase = new ArrayList<>();
+        List<String> defaultDummyTable    = new ArrayList<>();
+
+        defaultDummyDatabase.add(SemanticAnalyzer.DUMMY_DATABASE);
+        defaultDummyTable.add(SemanticAnalyzer.DUMMY_TABLE);
+
+        ignoreDummyDatabaseName        = atlasProperties.getList("atlas.hook.hive.ignore.dummy.database.name", defaultDummyDatabase);
+        ignoreDummyTableName           = atlasProperties.getList("atlas.hook.hive.ignore.dummy.table.name", defaultDummyTable);
+        ignoreValuesTmpTableNamePrefix = atlasProperties.getString("atlas.hook.hive.ignore.values.tmp.table.name.prefix", "Values__Tmp__Table__");
+
+        try {
+            hostName = InetAddress.getLocalHost().getHostName();
+        } catch (UnknownHostException e) {
+            LOG.warn("No hostname found. Setting the hostname to default value {}", DEFAULT_HOST_NAME, e);
+            hostName = DEFAULT_HOST_NAME;
+        }
     }
 
 
@@ -146,17 +170,10 @@ public class HiveHook extends AtlasHook implements ExecuteWithHookContext {
             LOG.debug("==> HiveHook.run({})", hookContext.getOperationName());
         }
 
-        if (knownObjects != null && knownObjects.isCacheExpired()) {
-            LOG.info("HiveHook.run(): purging cached databaseNames ({}) and tableNames ({})", knownObjects.getCachedDbCount(), knownObjects.getCachedTableCount());
-
-            knownObjects = new HiveHookObjectNamesCache(nameCacheDatabaseMaxCount, nameCacheTableMaxCount, nameCacheRebuildIntervalSeconds);
-        }
-
         try {
             HiveOperation        oper    = OPERATION_MAP.get(hookContext.getOperationName());
-            AtlasHiveHookContext context = new AtlasHiveHookContext(this, oper, hookContext, knownObjects);
-
-            BaseHiveEvent event = null;
+            AtlasHiveHookContext context = new AtlasHiveHookContext(this, oper, hookContext, getKnownObjects());
+            BaseHiveEvent        event   = null;
 
             switch (oper) {
                 case CREATEDATABASE:
@@ -169,6 +186,7 @@ public class HiveHook extends AtlasHook implements ExecuteWithHookContext {
 
                 case ALTERDATABASE:
                 case ALTERDATABASE_OWNER:
+                case ALTERDATABASE_LOCATION:
                     event = new AlterDatabase(context);
                 break;
 
@@ -188,7 +206,6 @@ public class HiveHook extends AtlasHook implements ExecuteWithHookContext {
                 case EXPORT:
                 case IMPORT:
                 case QUERY:
-                case TRUNCATETABLE:
                     event = new CreateHiveProcess(context);
                 break;
 
@@ -252,6 +269,18 @@ public class HiveHook extends AtlasHook implements ExecuteWithHookContext {
         return skipHiveColumnLineageHive20633InputsThreshold;
     }
 
+    public  List getIgnoreDummyDatabaseName() {
+        return ignoreDummyDatabaseName;
+    }
+
+    public  List getIgnoreDummyTableName() {
+        return ignoreDummyTableName;
+    }
+
+    public  String getIgnoreValuesTmpTableNamePrefix() {
+        return ignoreValuesTmpTableNamePrefix;
+    }
+
     public PreprocessAction getPreprocessActionForHiveTable(String qualifiedName) {
         PreprocessAction ret = PreprocessAction.NONE;
 
@@ -288,6 +317,19 @@ public class HiveHook extends AtlasHook implements ExecuteWithHookContext {
         return ret;
     }
 
+    public static HiveHookObjectNamesCache getKnownObjects() {
+        if (knownObjects != null && knownObjects.isCacheExpired()) {
+            LOG.info("HiveHook.run(): purging cached databaseNames ({}) and tableNames ({})", knownObjects.getCachedDbCount(), knownObjects.getCachedTableCount());
+
+            knownObjects = new HiveHook.HiveHookObjectNamesCache(nameCacheDatabaseMaxCount, nameCacheTableMaxCount, nameCacheRebuildIntervalSeconds);
+        }
+
+        return knownObjects;
+    }
+
+    public String getHostName() {
+        return hostName;
+    }
 
     public static class HiveHookObjectNamesCache {
         private final int         dbMaxCacheCount;

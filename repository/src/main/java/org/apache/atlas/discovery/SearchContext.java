@@ -37,14 +37,13 @@ import org.apache.atlas.type.AtlasEntityType;
 import org.apache.atlas.type.AtlasStructType;
 import org.apache.atlas.type.AtlasStructType.AtlasAttribute;
 import org.apache.atlas.type.AtlasTypeRegistry;
+import org.apache.atlas.util.AtlasRepositoryConfiguration;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 import static org.apache.atlas.model.discovery.SearchParameters.ALL_CLASSIFICATIONS;
 import static org.apache.atlas.model.discovery.SearchParameters.NO_CLASSIFICATIONS;
@@ -56,6 +55,7 @@ import static org.apache.atlas.model.discovery.SearchParameters.WILDCARD_CLASSIF
  * possible chaining of processor(s)
  */
 public class SearchContext {
+    private static final Logger LOG      = LoggerFactory.getLogger(SearchContext.class);
     private final SearchParameters        searchParameters;
     private final AtlasTypeRegistry       typeRegistry;
     private final AtlasGraph              graph;
@@ -65,10 +65,15 @@ public class SearchContext {
     private final AtlasClassificationType classificationType;
     private       SearchProcessor         searchProcessor;
     private       boolean                 terminateSearch = false;
+    private final Set<String>             typeAndSubTypes;
+    private final Set<String>             classificationTypeAndSubTypes;
+    private final String                  typeAndSubTypesQryStr;
+    private final String                  classificationTypeAndSubTypesQryStr;
 
     public final static AtlasClassificationType MATCH_ALL_WILDCARD_CLASSIFICATION = new AtlasClassificationType(new AtlasClassificationDef(WILDCARD_CLASSIFICATIONS));
     public final static AtlasClassificationType MATCH_ALL_CLASSIFIED              = new AtlasClassificationType(new AtlasClassificationDef(ALL_CLASSIFICATIONS));
     public final static AtlasClassificationType MATCH_ALL_NOT_CLASSIFIED          = new AtlasClassificationType(new AtlasClassificationDef(NO_CLASSIFICATIONS));
+
 
     public SearchContext(SearchParameters searchParameters, AtlasTypeRegistry typeRegistry, AtlasGraph graph, Set<String> indexedKeys) throws AtlasBaseException {
         String classificationName = searchParameters.getClassification();
@@ -104,17 +109,55 @@ public class SearchContext {
         // Invalid attributes will raise an exception with 400 error code
         validateAttributes(classificationType, searchParameters.getTagFilters());
 
+        if (entityType != null) {
+            if (searchParameters.getIncludeSubTypes()) {
+                typeAndSubTypes       = entityType.getTypeAndAllSubTypes();
+                typeAndSubTypesQryStr = entityType.getTypeAndAllSubTypesQryStr();
+            } else {
+                typeAndSubTypes       = Collections.singleton(entityType.getTypeName());
+                typeAndSubTypesQryStr = entityType.getTypeQryStr();
+            }
+        } else {
+            typeAndSubTypes       = Collections.emptySet();
+            typeAndSubTypesQryStr = "";
+        }
+
+        if (classificationType != null) {
+            if (classificationType == MATCH_ALL_CLASSIFIED || classificationType == MATCH_ALL_NOT_CLASSIFIED || classificationType == MATCH_ALL_WILDCARD_CLASSIFICATION) {
+                classificationTypeAndSubTypes       = Collections.emptySet();
+                classificationTypeAndSubTypesQryStr = "";
+            } else if (searchParameters.getIncludeSubClassifications()) {
+                classificationTypeAndSubTypes       = classificationType.getTypeAndAllSubTypes();
+                classificationTypeAndSubTypesQryStr = classificationType.getTypeAndAllSubTypesQryStr();
+            } else {
+                classificationTypeAndSubTypes       = Collections.singleton(classificationType.getTypeName());
+                classificationTypeAndSubTypesQryStr = classificationType.getTypeQryStr();
+            }
+        } else {
+            classificationTypeAndSubTypes       = Collections.emptySet();
+            classificationTypeAndSubTypesQryStr = "";
+        }
+
         if (glossaryTermVertex != null) {
             addProcessor(new TermSearchProcessor(this, getAssignedEntities(glossaryTermVertex)));
         }
 
         if (needFullTextProcessor()) {
-            addProcessor(new FullTextSearchProcessor(this));
+            if (AtlasRepositoryConfiguration.isFreeTextSearchEnabled()) {
+                LOG.debug("Using Free Text index based search.");
+
+                addProcessor(new FreeTextSearchProcessor(this));
+            } else {
+                LOG.debug("Using Full Text index based search.");
+
+                addProcessor(new FullTextSearchProcessor(this));
+            }
         }
 
         if (needClassificationProcessor()) {
             addProcessor(new ClassificationSearchProcessor(this));
         }
+
 
         if (needEntityProcessor()) {
             addProcessor(new EntitySearchProcessor(this));
@@ -135,7 +178,35 @@ public class SearchContext {
 
     public AtlasClassificationType getClassificationType() { return classificationType; }
 
+    public Set<String> getEntityTypes() { return typeAndSubTypes; }
+
+    public Set<String> getClassificationTypes() { return classificationTypeAndSubTypes; }
+
+    public String getEntityTypesQryStr() { return typeAndSubTypesQryStr; }
+
+    public String getClassificationTypesQryStr() { return classificationTypeAndSubTypesQryStr; }
+
     public SearchProcessor getSearchProcessor() { return searchProcessor; }
+
+    public boolean includeEntityType(String entityType) {
+        return typeAndSubTypes.isEmpty() || typeAndSubTypes.contains(entityType);
+    }
+
+    public boolean includeClassificationTypes(Collection<String> classificationTypes) {
+        final boolean ret;
+
+        if (classificationType == null) {
+            ret = true;
+        } else if (classificationType == MATCH_ALL_NOT_CLASSIFIED) {
+            ret = CollectionUtils.isEmpty(classificationTypes);
+        } else if (classificationType == MATCH_ALL_CLASSIFIED || classificationType == MATCH_ALL_WILDCARD_CLASSIFICATION) {
+            ret = CollectionUtils.isNotEmpty(classificationTypes);
+        } else {
+            ret = CollectionUtils.containsAny(classificationTypeAndSubTypes, classificationTypes);
+        }
+
+        return ret;
+    }
 
     public boolean terminateSearch() { return terminateSearch; }
 

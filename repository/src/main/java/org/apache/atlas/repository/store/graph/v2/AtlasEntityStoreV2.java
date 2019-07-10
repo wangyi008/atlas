@@ -104,17 +104,17 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
     @Override
     @GraphTransaction
     public AtlasEntityWithExtInfo getById(String guid) throws AtlasBaseException {
-        return getById(guid, false);
+        return getById(guid, false, false);
     }
 
     @Override
     @GraphTransaction
-    public AtlasEntityWithExtInfo getById(final String guid, final boolean isMinExtInfo) throws AtlasBaseException {
+    public AtlasEntityWithExtInfo getById(final String guid, final boolean isMinExtInfo, boolean ignoreRelationships) throws AtlasBaseException {
         if (LOG.isDebugEnabled()) {
             LOG.debug("==> getById({}, {})", guid, isMinExtInfo);
         }
 
-        EntityGraphRetriever entityRetriever = new EntityGraphRetriever(typeRegistry);
+        EntityGraphRetriever entityRetriever = new EntityGraphRetriever(typeRegistry, ignoreRelationships);
 
         AtlasEntityWithExtInfo ret = entityRetriever.toAtlasEntityWithExtInfo(guid, isMinExtInfo);
 
@@ -158,17 +158,17 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
     @Override
     @GraphTransaction
     public AtlasEntitiesWithExtInfo getByIds(List<String> guids) throws AtlasBaseException {
-        return getByIds(guids, false);
+        return getByIds(guids, false, false);
     }
 
     @Override
     @GraphTransaction
-    public AtlasEntitiesWithExtInfo getByIds(List<String> guids, boolean isMinExtInfo) throws AtlasBaseException {
+    public AtlasEntitiesWithExtInfo getByIds(List<String> guids, boolean isMinExtInfo, boolean ignoreRelationships) throws AtlasBaseException {
         if (LOG.isDebugEnabled()) {
             LOG.debug("==> getByIds({}, {})", guids, isMinExtInfo);
         }
 
-        EntityGraphRetriever entityRetriever = new EntityGraphRetriever(typeRegistry);
+        EntityGraphRetriever entityRetriever = new EntityGraphRetriever(typeRegistry, ignoreRelationships);
 
         AtlasEntitiesWithExtInfo ret = entityRetriever.toAtlasEntitiesWithExtInfo(guids, isMinExtInfo);
 
@@ -189,28 +189,51 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
 
     @Override
     @GraphTransaction
-    public AtlasEntityWithExtInfo getByUniqueAttributes(AtlasEntityType entityType, Map<String, Object> uniqAttributes)
-            throws AtlasBaseException {
-        return getByUniqueAttributes(entityType, uniqAttributes, false);
+    public AtlasEntitiesWithExtInfo getEntitiesByUniqueAttributes(AtlasEntityType entityType, List<Map<String, Object>> uniqueAttributes , boolean isMinExtInfo, boolean ignoreRelationships) throws AtlasBaseException {
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("==> getEntitiesByUniqueAttributes({}, {})", entityType.getTypeName(), uniqueAttributes);
+        }
+
+        EntityGraphRetriever entityRetriever = new EntityGraphRetriever(typeRegistry, ignoreRelationships);
+
+        AtlasEntitiesWithExtInfo ret = entityRetriever.getEntitiesByUniqueAttributes(entityType.getTypeName(), uniqueAttributes, isMinExtInfo);
+
+        if (ret != null && ret.getEntities() != null) {
+            for (AtlasEntity entity : ret.getEntities()) {
+                AtlasAuthorizationUtils.verifyAccess(new AtlasEntityAccessRequest(typeRegistry, AtlasPrivilege.ENTITY_READ, new AtlasEntityHeader(entity)), "read entity: typeName=", entityType.getTypeName(), ", guid=", entity.getGuid());
+            }
+        }
+
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("<== getEntitiesByUniqueAttributes({}, {}): {}", entityType.getTypeName(), uniqueAttributes, ret);
+        }
+
+        return ret;
     }
 
     @Override
     @GraphTransaction
-    public AtlasEntityWithExtInfo getByUniqueAttributes(AtlasEntityType entityType, Map<String, Object> uniqAttributes, boolean isMinExtInfo)
+    public AtlasEntityWithExtInfo getByUniqueAttributes(AtlasEntityType entityType, Map<String, Object> uniqAttributes)
             throws AtlasBaseException {
+        return getByUniqueAttributes(entityType, uniqAttributes, false, false);
+    }
+
+    @Override
+    @GraphTransaction
+    public AtlasEntityWithExtInfo getByUniqueAttributes(AtlasEntityType entityType, Map<String, Object> uniqAttributes, boolean isMinExtInfo, boolean ignoreRelationships) throws AtlasBaseException {
         if (LOG.isDebugEnabled()) {
             LOG.debug("==> getByUniqueAttribute({}, {})", entityType.getTypeName(), uniqAttributes);
         }
 
         AtlasVertex entityVertex = AtlasGraphUtilsV2.getVertexByUniqueAttributes(entityType, uniqAttributes);
 
-        EntityGraphRetriever entityRetriever = new EntityGraphRetriever(typeRegistry);
+        EntityGraphRetriever entityRetriever = new EntityGraphRetriever(typeRegistry, ignoreRelationships);
 
         AtlasEntityWithExtInfo ret = entityRetriever.toAtlasEntityWithExtInfo(entityVertex, isMinExtInfo);
 
         if (ret == null) {
             throw new AtlasBaseException(AtlasErrorCode.INSTANCE_BY_UNIQUE_ATTRIBUTE_NOT_FOUND, entityType.getTypeName(),
-                                         uniqAttributes.toString());
+                    uniqAttributes.toString());
         }
 
         AtlasAuthorizationUtils.verifyAccess(new AtlasEntityAccessRequest(typeRegistry, AtlasPrivilege.ENTITY_READ, new AtlasEntityHeader(ret.getEntity())), "read entity: typeName=", entityType.getTypeName(), ", uniqueAttributes=", uniqAttributes);
@@ -253,7 +276,7 @@ public class AtlasEntityStoreV2 implements AtlasEntityStore {
     }
 
     @Override
-    @GraphTransaction
+    @GraphTransaction(logRollback = false)
     public EntityMutationResponse createOrUpdateForImport(EntityStream entityStream) throws AtlasBaseException {
         return createOrUpdate(entityStream, false, true);
     }

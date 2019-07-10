@@ -18,7 +18,8 @@
 define(['require',
     'utils/Utils',
     'd3',
-    'marionette'
+    'marionette',
+    'jquery-ui'
 ], function(require, Utils, d3) {
     'use strict';
     _.mixin({
@@ -31,6 +32,9 @@ define(['require',
             } else {
                 return false;
             }
+        },
+        toArrayifObject: function(val) {
+            return _.isObject(val) ? [val] : val;
         },
         startsWith: function(str, matchStr) {
             if (str && matchStr && _.isString(str) && _.isString(matchStr)) {
@@ -134,7 +138,7 @@ define(['require',
                     '<div class="col-md-10"><input class="select2-search__field" placeholder="' + placeholder + '" type="search"' +
                     ' tabindex="-1" autocomplete="off" autocorrect="off" autocapitalize="off"' +
                     ' spellcheck="false" role="textbox" /></div>' +
-                    '<div class="col-md-2"><button type="button" style="margin-left: -20px" class="btn btn-action btn-sm filter " title="Entity Attribute Filter"><i class="fa fa-filter"></i></button></div>' +
+                    '<div class="col-md-2"><button type="button" style="margin-left: -20px" class="btn btn-action btn-sm filter " title="Type Filter"><i class="fa fa-filter"></i></button></div>' +
                     '</div></span>'
                 );
                 if (!this.options.options.getFilterBox) {
@@ -197,6 +201,29 @@ define(['require',
 
             return adapter;
         });
+
+    $.widget("custom.atlasAutoComplete", $.ui.autocomplete, {
+        _create: function() {
+            this._super();
+            this.widget().menu("option", "items", "> :not(.ui-autocomplete-category,.empty)");
+        },
+        _renderMenu: function(ul, items) {
+            var that = this,
+                currentCategory = "";
+            items = _.sortBy(items, 'order');
+            $.each(items, function(index, item) {
+                var li;
+                if (item.category != currentCategory) {
+                    ul.append("<li class='ui-autocomplete-category'>" + item.category + "</li>");
+                    currentCategory = item.category;
+                }
+                that._renderItemData(ul, item);
+            });
+        },
+        _renderItemData: function(ul, item) {
+            return this._renderItem(ul, item);
+        }
+    });
 
     // For placeholder support 
     if (!('placeholder' in HTMLInputElement.prototype)) {

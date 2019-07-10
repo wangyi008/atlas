@@ -21,6 +21,7 @@ import org.apache.atlas.ApplicationProperties;
 import org.apache.commons.configuration.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Scope;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.stereotype.Component;
@@ -29,17 +30,21 @@ import javax.annotation.PostConstruct;
 import javax.inject.Inject;
 
 @Component
+@Scope("prototype")
 public class AtlasAuthenticationProvider extends AtlasAbstractAuthenticationProvider {
     private static final Logger LOG = LoggerFactory
             .getLogger(AtlasAuthenticationProvider.class);
 
     private boolean fileAuthenticationMethodEnabled = true;
     private boolean pamAuthenticationEnabled = false;
+    private boolean keycloakAuthenticationEnabled = false;
+
     private String ldapType = "NONE";
     public static final String FILE_AUTH_METHOD = "atlas.authentication.method.file";
     public static final String LDAP_AUTH_METHOD = "atlas.authentication.method.ldap";
     public static final String LDAP_TYPE = "atlas.authentication.method.ldap.type";
     public static final String PAM_AUTH_METHOD = "atlas.authentication.method.pam";
+    public static final String KEYCLOAK_AUTH_METHOD = "atlas.authentication.method.keycloak";
 
 
 
@@ -53,15 +58,19 @@ public class AtlasAuthenticationProvider extends AtlasAbstractAuthenticationProv
 
     final AtlasPamAuthenticationProvider pamAuthenticationProvider;
 
+    final AtlasKeycloakAuthenticationProvider atlasKeycloakAuthenticationProvider;
+
     @Inject
     public AtlasAuthenticationProvider(AtlasLdapAuthenticationProvider ldapAuthenticationProvider,
                                        AtlasFileAuthenticationProvider fileAuthenticationProvider,
                                        AtlasADAuthenticationProvider adAuthenticationProvider,
-                                       AtlasPamAuthenticationProvider pamAuthenticationProvider) {
+                                       AtlasPamAuthenticationProvider pamAuthenticationProvider,
+                                       AtlasKeycloakAuthenticationProvider atlasKeycloakAuthenticationProvider) {
         this.ldapAuthenticationProvider = ldapAuthenticationProvider;
         this.fileAuthenticationProvider = fileAuthenticationProvider;
         this.adAuthenticationProvider = adAuthenticationProvider;
         this.pamAuthenticationProvider = pamAuthenticationProvider;
+        this.atlasKeycloakAuthenticationProvider = atlasKeycloakAuthenticationProvider;
     }
 
     @PostConstruct
@@ -72,6 +81,8 @@ public class AtlasAuthenticationProvider extends AtlasAbstractAuthenticationProv
             this.fileAuthenticationMethodEnabled = configuration.getBoolean(FILE_AUTH_METHOD, true);
 
             this.pamAuthenticationEnabled = configuration.getBoolean(PAM_AUTH_METHOD, false);
+
+            this.keycloakAuthenticationEnabled = configuration.getBoolean(KEYCLOAK_AUTH_METHOD, false);
 
             boolean ldapAuthenticationEnabled = configuration.getBoolean(LDAP_AUTH_METHOD, false);
 
@@ -116,6 +127,12 @@ public class AtlasAuthenticationProvider extends AtlasAbstractAuthenticationProv
                 } catch (Exception ex) {
                     LOG.error("Error while PAM authentication", ex);
                 }
+            } else if (keycloakAuthenticationEnabled) {
+                try {
+                    authentication = atlasKeycloakAuthenticationProvider.authenticate(authentication);
+                } catch (Exception ex) {
+                    LOG.error("Error while Keycloak authentication", ex);
+                }
             }
         }
 
@@ -133,6 +150,21 @@ public class AtlasAuthenticationProvider extends AtlasAbstractAuthenticationProv
 
         LOG.error("Authentication failed.");
         throw new AtlasAuthenticationException("Authentication failed.");
+    }
+
+    @Override
+    public boolean supports(Class<?> authentication) {
+        if (pamAuthenticationEnabled) {
+            return pamAuthenticationProvider.supports(authentication);
+        } else if (ldapType.equalsIgnoreCase("LDAP")) {
+            return ldapAuthenticationProvider.supports(authentication);
+        } else if (ldapType.equalsIgnoreCase("AD")) {
+            return adAuthenticationProvider.supports(authentication);
+        } else if (keycloakAuthenticationEnabled) {
+            return atlasKeycloakAuthenticationProvider.supports(authentication);
+        } else {
+            return super.supports(authentication);
+        }
     }
 
     public boolean isSsoEnabled() {

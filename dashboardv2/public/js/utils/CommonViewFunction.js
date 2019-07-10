@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Globals', 'utils/Enums', 'moment'], function(require, Utils, Modal, Messages, Globals, Enums, moment) {
+define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Enums', 'moment'], function(require, Utils, Modal, Messages, Enums, moment) {
     'use strict';
 
     var CommonViewFunction = {};
@@ -78,18 +78,34 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
             extractJSON = options.extractJSON,
             isTable = _.isUndefined(options.isTable) ? true : options.isTable,
             attributeDefs = options.attributeDefs,
-            numberFormat = options.numberFormat;
+            formatIntVal = options.formatIntVal,
+            showListCount = options.showListCount || true,
+            highlightString = options.highlightString,
+            numberFormat = options.numberFormat || _.numberFormatWithComa;
 
         var table = "",
-            getValue = function(val) {
-                if (val && numberFormat) {
-                    if (_.isNumber(val)) {
-                        return numberFormat(val);
-                    } else if (!_.isNaN(parseInt(val))) {
-                        return numberFormat(val);
+            getHighlightedString = function(resultStr) {
+                if (highlightString && highlightString.length) {
+                    try {
+                        return resultStr.replace(new RegExp(highlightString, "gi"), function(foundStr) {
+                            return "<span class='searched-term-highlight'>" + foundStr + "</span>"
+                        });
+                    } catch (error) {
+                        return resultStr;
                     }
                 } else {
-                    return val || "N/A";
+                    return resultStr;
+                }
+            },
+            getValue = function(val) {
+                if (val) {
+                    if ((_.isNumber(val) || !_.isNaN(parseInt(val))) && formatIntVal) {
+                        return numberFormat(val);
+                    } else {
+                        return getHighlightedString(val);
+                    }
+                } else {
+                    return "N/A";
                 }
             },
             fetchInputOutputValue = function(id, defEntity) {
@@ -102,7 +118,7 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                         value = Utils.getName(data);
                         var id = "";
                         if (data.guid) {
-                            if (Enums.entityStateReadOnly[data.status]) {
+                            if (Enums.entityStateReadOnly[data.status || data.entityStatus]) {
                                 deleteButton += '<button title="Deleted" class="btn btn-action btn-md deleteBtn"><i class="fa fa-trash"></i></button>';
                             }
                             id = data.guid;
@@ -142,7 +158,7 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                     var inputOutputField = keyValue[i],
                         id = inputOutputField.guid || (_.isObject(inputOutputField.id) ? inputOutputField.id.id : inputOutputField.id),
                         tempLink = "",
-                        status = inputOutputField.status || (_.isObject(inputOutputField.id) ? inputOutputField.id.state : inputOutputField.state),
+                        status = (inputOutputField.status || inputOutputField.entityStatus) || (_.isObject(inputOutputField.id) ? inputOutputField.id.state : inputOutputField.state),
                         readOnly = Enums.entityStateReadOnly[status];
                     if (!inputOutputField.attributes && inputOutputField.values) {
                         inputOutputField['attributes'] = inputOutputField.values;
@@ -178,9 +194,9 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                                     }
                                 }
                             });
-                            valueOfArray.push(Utils.JSONPrettyPrint(newAttributesList));
+                            valueOfArray.push(Utils.JSONPrettyPrint(newAttributesList, getValue));
                         } else {
-                            valueOfArray.push(Utils.JSONPrettyPrint(attributesList));
+                            valueOfArray.push(Utils.JSONPrettyPrint(attributesList, getValue));
                         }
                     }
                     if (id && inputOutputField) {
@@ -191,7 +207,7 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                             fetchInputOutputValue(fetchId, defEntity);
                             tempLink += '<div data-id="' + fetchId + '"><div class="value-loader"></div></div>';
                         } else {
-                            tempLink += '<a href="#!/detailPage/' + id + '">' + name + '</a>'
+                            tempLink += '<a href="#!/detailPage/' + id + '">' + getValue(name) + '</a>'
                         }
                     }
                     if (readOnly) {
@@ -226,8 +242,8 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
             if (key == "profileData") {
                 return;
             }
-            var keyValue = valueObject[key];
-            var count = _.isArray(keyValue) ? (keyValue.length) : 0;
+            var keyValue = valueObject[key],
+                listCount = showListCount && _.isArray(keyValue) && keyValue.length > 0 ? ' (' + numberFormat(keyValue.length) + ')' : "";
             var defEntity = _.find(attributeDefs, { name: key });
             if (defEntity && defEntity.typeName) {
                 var defEntityType = defEntity.typeName.toLocaleLowerCase();
@@ -245,14 +261,16 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
             if (_.isObject(valueObject[key])) {
                 val = keyValue
             } else if (Utils.isUrl(keyValue)) {
-                val = '<a target="_blank" class="blue-link" href="' + keyValue + '">' + keyValue + '</a>';
+                val = '<a target="_blank" class="blue-link" href="' + keyValue + '">' + getValue(keyValue) + '</a>';
             } else if (key === 'guid' || key === "__guid") {
-                val = '<a title="' + key + '" href="#!/detailPage/' + keyValue + '">' + keyValue + '</a>';
+                val = '<a title="' + key + '" href="#!/detailPage/' + keyValue + '">' + getValue(keyValue) + '</a>';
             } else {
-                val = _.escape(keyValue);
+                val = getValue(_.escape(keyValue));
             }
             if (isTable) {
-                var htmlTag = '<div class="scroll-y">' + getValue(val) + '</div>';
+                var value = val,
+                    appendClass = (value == "N/A" ? "hide-row" : ""),
+                    htmlTag = '<div class="scroll-y">' + value + '</div>';
                 if (_.isObject(valueObject[key]) && !_.isEmpty(valueObject[key])) {
                     var matchedLinkString = val.match(/href|value-loader\w*/g),
                         matchedJson = val.match(/json-value|json-string\w*/g),
@@ -264,14 +282,13 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                         htmlTag = '<pre class="shrink code-block ' + (isMatchJSONStringIsSingle ? 'fixed-height' : '') + '">' + expandCollapseButton + '<code>' + val + '</code></pre>';
                     }
                 }
-                var textToDisplay = count > 0 ? ' (' + getValue(count) + ')' : '';
-                table += '<tr><td>' + _.escape(key) + textToDisplay + '</td><td>' + htmlTag + '</td></tr>';
+                table += '<tr class="' + appendClass + '"><td>' + (_.escape(key) + listCount) + '</td><td>' + htmlTag + '</td></tr>';
             } else {
                 table += '<div>' + val + '</div>';
             }
 
         });
-        return table;
+        return table && table.length > 0 ? table : '<tr class="empty"><td colspan="22"><span>No Record found!</span></td></tr>';
     }
     CommonViewFunction.tagForTable = function(obj) {
         var traits = obj.classifications,
@@ -300,7 +317,7 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                 ++count;
             });
         }
-        if (!Enums.entityStateReadOnly[obj.status]) {
+        if (!Enums.entityStateReadOnly[obj.status || obj.entityStatus]) {
             if (obj.guid) {
                 addTag += '<a href="javascript:void(0)" data-id="addTag" class="btn btn-action btn-sm assignTag" data-guid="' + obj.guid + '" ><i class="fa fa-plus"></i></a>';
             } else {
@@ -323,7 +340,7 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
             terms.map(function(term) {
                 var className = "btn btn-action btn-sm btn-blue btn-icon",
                     deleteIcon = '<i class="fa fa-times" data-id="delete"  data-assetname="' + entityName + '"data-name="' + term.displayText + '" data-type="term" data-guid="' + obj.guid + '" data-termGuid="' + term.termGuid + '" ></i>',
-                    termString = '<a class="' + className + '" data-id="termClick"><span title="' + term.displayText + '">' + term.displayText + '</span>' + deleteIcon + '</a>';
+                    termString = '<a class="' + className + '" data-id="termClick"><span title="' + _.escape(term.displayText) + '">' + _.escape(term.displayText) + '</span>' + deleteIcon + '</a>';
                 if (count >= 1) {
                     popTerm += termString;
                 } else {
@@ -332,20 +349,8 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                 ++count;
             });
         }
-        if (!Enums.entityStateReadOnly[obj.status]) {
+        if (!Enums.entityStateReadOnly[obj.status || obj.entityStatus]) {
             if (obj.guid) {
-                var newD = { "guid": obj.guid, "termLinks": obj.meanings };
-                Globals.termMeanings = Globals.termMeanings ? Globals.termMeanings : [];
-                if (Globals.termMeanings.length > 0) {
-                    for (var x in Globals.termMeanings) {
-                        if (Globals.termMeanings[x]['guid'] == obj.guid) {
-                            Globals.termMeanings[x].termLinks = obj.meanings;
-                        }
-                    }
-                }
-                if (newD.termLinks.length > 0 && Globals.termMeanings == 0) {
-                    Globals.termMeanings.push(newD);
-                }
                 addTerm += '<a href="javascript:void(0)" data-id="addTerm" class="btn btn-action btn-sm assignTag" data-guid="' + obj.guid + '" ><i class="fa fa-plus"></i></a>';
             } else {
                 addTerm += '<a href="javascript:void(0)" data-id="addTerm" class="btn btn-action btn-sm assignTag"><i style="right:0" class="fa fa-plus"></i></a>';
@@ -556,11 +561,34 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                 urlObj = options.value,
                 formatDate = options.formatDate,
                 spliter = 1,
-                apiObj = options.apiObj; //if apiObj then create object for API call else for QueryBuilder.
-            if (urlObj && urlObj.length) {
-                attrObj = createObject(urlObj);
-
-                function createObject(urlObj) {
+                apiObj = options.apiObj,
+                mapUiOperatorToAPI = function(oper) {
+                    if (oper == "=") {
+                        return "eq";
+                    } else if (oper == "!=") {
+                        return "neq";
+                    } else if (oper == "<") {
+                        return "lt";
+                    } else if (oper == "<=") {
+                        return "lte";
+                    } else if (oper == ">") {
+                        return "gt";
+                    } else if (oper == ">=") {
+                        return "gte";
+                    } else if (oper == "begins_with") {
+                        return "startsWith";
+                    } else if (oper == "ends_with") {
+                        return "endsWith";
+                    } else if (oper == "contains") {
+                        return "contains";
+                    } else if (oper == "not_null") {
+                        return "notNull";
+                    } else if (oper == "is_null") {
+                        return "isNull";
+                    }
+                    return oper;
+                },
+                createObject = function(urlObj) {
                     var finalObj = {};
                     finalObj['condition'] = /^AND\(/.test(urlObj) ? "AND" : "OR";
                     urlObj = finalObj.condition === "AND" ? urlObj.substr(4).slice(0, -1) : urlObj.substr(3).slice(0, -1);
@@ -590,37 +618,13 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                     });
                     return finalObj;
                 }
+            //if apiObj then create object for API call else for QueryBuilder.
+            if (urlObj && urlObj.length) {
+                attrObj = createObject(urlObj);
             } else {
                 return null;
             }
             return attrObj;
-
-            function mapUiOperatorToAPI(oper) {
-                if (oper == "=") {
-                    return "eq";
-                } else if (oper == "!=") {
-                    return "neq";
-                } else if (oper == "<") {
-                    return "lt";
-                } else if (oper == "<=") {
-                    return "lte";
-                } else if (oper == ">") {
-                    return "gt";
-                } else if (oper == ">=") {
-                    return "gte";
-                } else if (oper == "begins_with") {
-                    return "startsWith";
-                } else if (oper == "ends_with") {
-                    return "endsWith";
-                } else if (oper == "contains") {
-                    return "contains";
-                } else if (oper == "not_null") {
-                    return "notNull";
-                } else if (oper == "is_null") {
-                    return "isNull";
-                }
-                return oper;
-            }
         },
         generateAPIObj: function(url) {
             if (url && url.length) {
@@ -698,7 +702,7 @@ define(['require', 'utils/Utils', 'modules/Modal', 'utils/Messages', 'utils/Glob
                 collection = options.collection,
                 isGlossaryView = options.isGlossaryView,
                 data = ref.ui[(isGlossaryView ? "glossaryForm" : "categoryTermForm")].serializeArray().reduce(function(obj, item) {
-                    obj[item.name] = item.value;
+                    obj[item.name] = item.value.trim();
                     return obj;
                 }, {}),
                 newModel = new options.collection.model(),

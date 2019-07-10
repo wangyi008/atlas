@@ -61,7 +61,7 @@ define(['require',
                 };
                 events["click " + this.ui.propagatedFromClick] = function(e) {
                     Utils.setUrl({
-                        url: '#!/detailPage/' + e.currentTarget.dataset.guid,
+                        url: '#!/detailPage/' + $(e.currentTarget).data("guid"),
                         mergeBrowserUrl: false,
                         trigger: true
                     });
@@ -84,10 +84,10 @@ define(['require',
                     collection: this.tagCollection,
                     includeFilter: false,
                     includePagination: true,
-                    includePageSize: false,
                     includeFooterRecords: true,
                     includePageSize: true,
                     includeGotoPage: true,
+                    includeAtlasTableSorting: true,
                     gridOpts: {
                         className: "table table-hover backgrid table-quickMenu",
                         emptyText: 'No records found!'
@@ -120,7 +120,6 @@ define(['require',
                             label: "Classification",
                             cell: "html",
                             editable: false,
-                            sortable: false,
                             formatter: _.extend({}, Backgrid.CellFormatter.prototype, {
                                 fromRaw: function(rawValue, model) {
                                     if (that.guid !== model.get('entityGuid')) {
@@ -206,7 +205,7 @@ define(['require',
                     tagName: tagName,
                     guid: that.guid,
                     associatedGuid: that.guid != entityGuid ? entityGuid : null,
-                    msg: "<div class='ellipsis'>Remove: " + "<b>" + _.escape(tagName) + "</b> assignment from" + " " + "<b>" + this.entityName + "?</b></div>",
+                    msg: "<div class='ellipsis-with-margin'>Remove: " + "<b>" + _.escape(tagName) + "</b> assignment from" + " " + "<b>" + this.entityName + "?</b></div>",
                     titleMessage: Messages.removeTag,
                     okText: "Remove",
                     showLoader: function() {

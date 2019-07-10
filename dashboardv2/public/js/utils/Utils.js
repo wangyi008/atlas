@@ -550,11 +550,16 @@ define(['require', 'utils/Globals', 'pnotify', 'utils/Messages', 'utils/Enums', 
         loaderEl.hide ? loaderEl.hide() : null;
         titleBoxEl.fadeIn ? titleBoxEl.fadeIn() : null;
     }
-    Utils.findAndMergeRefEntity = function(attributeObject, referredEntities) {
+    Utils.findAndMergeRefEntity = function(options) {
+        var attributeObject = options.attributeObject,
+            referredEntities = options.referredEntities
         var mergeObject = function(obj) {
             if (obj) {
                 if (obj.attributes) {
-                    Utils.findAndMergeRefEntity(obj.attributes, referredEntities);
+                    Utils.findAndMergeRefEntity({
+                        "attributeObject": obj.attributes,
+                        "referredEntities": referredEntities
+                    });
                 } else if (referredEntities[obj.guid]) {
                     _.extend(obj, referredEntities[obj.guid]);
                 }
@@ -574,6 +579,34 @@ define(['require', 'utils/Globals', 'pnotify', 'utils/Messages', 'utils/Enums', 
             });
         }
     }
+
+    Utils.findAndMergeRelationShipEntity = function(options) {
+        var attributeObject = options.attributeObject,
+            relationshipAttributes = options.relationshipAttributes;
+        _.each(attributeObject, function(val, key) {
+            var attributVal = val;
+            if (relationshipAttributes && relationshipAttributes[key]) {
+                var relationShipVal = relationshipAttributes[key];
+                if (_.isObject(val)) {
+                    if (_.isArray(val)) {
+                        _.each(val, function(attr) {
+                            if (attr && attr.attributes === undefined) {
+                                var entityFound = _.find(relationShipVal, { guid: attr.guid });
+                                if (entityFound) {
+                                    attr.attributes = _.omit(entityFound, 'typeName', 'guid', 'entityStatus');
+                                    attr.status = entityFound.entityStatus;
+                                }
+                            }
+                        });
+                    } else if (relationShipVal && val.attributes === undefined) {
+                        val.attributes = _.omit(relationShipVal, 'typeName', 'guid', 'entityStatus');
+                        val.status = relationShipVal.entityStatus;
+                    }
+                }
+            }
+        })
+    }
+
     Utils.getNestedSuperTypes = function(options) {
         var data = options.data,
             collection = options.collection,
@@ -597,27 +630,57 @@ define(['require', 'utils/Globals', 'pnotify', 'utils/Messages', 'utils/Enums', 
         return _.uniq(superTypes);
     }
     Utils.getNestedSuperTypeObj = function(options) {
-        var flag = 0,
-            data = options.data,
-            collection = options.collection;
-        if (options.attrMerge) {
-            var attributeDefs = [];
-        } else {
-            var attributeDefs = {};
+        var mainData = options.data,
+            collection = options.collection,
+            attrMerge = options.attrMerge,
+            seperateRelatioshipAttr = options.seperateRelatioshipAttr || false,
+            mergeRelationAttributes = options.mergeRelationAttributes || (seperateRelatioshipAttr ? false : true);
+
+        if (mergeRelationAttributes && seperateRelatioshipAttr) {
+            throw "Both mergeRelationAttributes & seperateRelatioshipAttr cannot be true!"
+        }
+        var attributeDefs = {};
+        if (attrMerge && !seperateRelatioshipAttr) {
+            attributeDefs = [];
+        } else if (options.attrMerge && seperateRelatioshipAttr) {
+            attributeDefs = {
+                attributeDefs: [],
+                relationshipAttributeDefs: []
+            }
+        }
+        var getRelationshipAttributeDef = function(data) {
+            return _.filter(
+                data.relationshipAttributeDefs,
+                function(obj, key) {
+                    return obj;
+                })
         }
         var getData = function(data, collection) {
             if (options.attrMerge) {
-                attributeDefs = attributeDefs.concat(data.attributeDefs);
+                if (seperateRelatioshipAttr) {
+                    attributeDefs.attributeDefs = attributeDefs.attributeDefs.concat(data.attributeDefs);
+                    attributeDefs.relationshipAttributeDefs = attributeDefs.relationshipAttributeDefs.concat(getRelationshipAttributeDef(data));
+                } else {
+                    attributeDefs = attributeDefs.concat(data.attributeDefs);
+                    if (mergeRelationAttributes) {
+                        attributeDefs = attributeDefs.concat(getRelationshipAttributeDef(data));
+                    }
+                }
             } else {
                 if (attributeDefs[data.name]) {
-                    if (_.isArray(attributeDefs[data.name])) {
-                        attributeDefs[data.name] = attributeDefs[data.name].concat(data.attributeDefs);
-                    } else {
-                        _.extend(attributeDefs[data.name], data.attributeDefs);
-                    }
-
+                    attributeDefs[data.name] = _.toArrayifObject(attributeDefs[data.name]).concat(data.attributeDefs);
                 } else {
-                    attributeDefs[data.name] = data.attributeDefs;
+                    if (seperateRelatioshipAttr) {
+                        attributeDefs[data.name] = {
+                            attributeDefs: data.attributeDefs,
+                            relationshipAttributeDefs: data.relationshipAttributeDefs
+                        };
+                    } else {
+                        attributeDefs[data.name] = data.attributeDefs;
+                        if (mergeRelationAttributes) {
+                            attributeDefs[data.name] = _.toArrayifObject(attributeDefs[data.name]).concat(getRelationshipAttributeDef(data));
+                        }
+                    }
                 }
             }
             if (data.superTypes && data.superTypes.length) {
@@ -636,7 +699,27 @@ define(['require', 'utils/Globals', 'pnotify', 'utils/Messages', 'utils/Enums', 
                 });
             }
         }
-        getData(data, collection);
+        getData(mainData, collection);
+        if (attrMerge) {
+            if (seperateRelatioshipAttr) {
+                attributeDefs = {
+                    attributeDefs: _.uniq(_.sortBy(attributeDefs.attributeDefs, 'name'), true, function(obj) {
+                        return obj.name
+                    }),
+                    relationshipAttributeDefs: _.uniq(_.sortBy(attributeDefs.relationshipAttributeDefs, 'name'), true, function(obj) {
+                        return (obj.name + obj.relationshipTypeName)
+                    })
+                }
+            } else {
+                attributeDefs = _.uniq(_.sortBy(attributeDefs, 'name'), true, function(obj) {
+                    if (obj.relationshipTypeName) {
+                        return (obj.name + obj.relationshipTypeName)
+                    } else {
+                        return (obj.name)
+                    }
+                });
+            }
+        }
         return attributeDefs;
     }
 
@@ -733,7 +816,7 @@ define(['require', 'utils/Globals', 'pnotify', 'utils/Messages', 'utils/Enums', 
         return regexp.test(url);
     }
 
-    Utils.JSONPrettyPrint = function(obj) {
+    Utils.JSONPrettyPrint = function(obj, getValue) {
         var replacer = function(match, pIndent, pKey, pVal, pEnd) {
                 var key = '<span class=json-key>';
                 var val = '<span class=json-value>';
@@ -742,7 +825,7 @@ define(['require', 'utils/Globals', 'pnotify', 'utils/Messages', 'utils/Enums', 
                 if (pKey)
                     r = r + key + pKey.replace(/[": ]/g, '') + '</span>: ';
                 if (pVal)
-                    r = r + (pVal[0] == '"' ? str : val) + pVal + '</span>';
+                    r = r + (pVal[0] == '"' ? str : val) + getValue(pVal) + '</span>';
                 return r + (pEnd || '');
             },
             jsonLine = /^( *)("[\w]+": )?("[^"]*"|[\w.+-]*)?([,[{])?$/mg;
@@ -762,6 +845,29 @@ define(['require', 'utils/Globals', 'pnotify', 'utils/Messages', 'utils/Enums', 
         } else {
             this.attr(attributeName, firstString);
         }
+    }
+
+    Utils.millisecondsToTime = function(duration) {
+        var milliseconds = parseInt((duration % 1000) / 100),
+            seconds = parseInt((duration / 1000) % 60),
+            minutes = parseInt((duration / (1000 * 60)) % 60),
+            hours = parseInt((duration / (1000 * 60 * 60)) % 24);
+
+        hours = (hours < 10) ? "0" + hours : hours;
+        minutes = (minutes < 10) ? "0" + minutes : minutes;
+        seconds = (seconds < 10) ? "0" + seconds : seconds;
+
+        return hours + ":" + minutes + ":" + seconds + "." + milliseconds;
+    }
+    Utils.togglePropertyRelationshipTableEmptyValues = function(object) {
+        var inputSelector = object.inputType,
+            tableEl = object.tableEl;
+        if (inputSelector.prop('checked') == true) {
+            tableEl.removeClass('hide-empty-value');
+        } else {
+            tableEl.addClass('hide-empty-value');
+        }
+
     }
     return Utils;
 });

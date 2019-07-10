@@ -23,6 +23,7 @@ import org.apache.atlas.ha.AtlasServerIdSelector;
 import org.apache.atlas.ha.HAConfiguration;
 import org.apache.atlas.listener.ActiveStateChangeHandler;
 import org.apache.atlas.service.Service;
+import org.apache.atlas.util.AtlasMetricsUtil;
 import org.apache.commons.configuration.Configuration;
 import org.apache.curator.framework.recipes.leader.LeaderLatch;
 import org.apache.curator.framework.recipes.leader.LeaderLatchListener;
@@ -39,6 +40,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 
+
 /**
  * A service that implements leader election to determine whether this Atlas server is Active.
  *
@@ -51,19 +53,21 @@ import java.util.Set;
  */
 
 @Component
-@Order(1)
+//
+// This should be called the last, leaving it without the @Order(Integer.MAX_VALUE) will make it get
+// called after all services have their start called.
 public class ActiveInstanceElectorService implements Service, LeaderLatchListener {
-
     private static final Logger LOG = LoggerFactory.getLogger(ActiveInstanceElectorService.class);
 
-    private final Configuration configuration;
-    private final ServiceState serviceState;
-    private final ActiveInstanceState activeInstanceState;
-    private Set<ActiveStateChangeHandler> activeStateChangeHandlerProviders;
-    private List<ActiveStateChangeHandler> activeStateChangeHandlers;
-    private CuratorFactory curatorFactory;
-    private LeaderLatch leaderLatch;
-    private String serverId;
+    private final Configuration                  configuration;
+    private final ServiceState                   serviceState;
+    private final ActiveInstanceState            activeInstanceState;
+    private final AtlasMetricsUtil               metricsUtil;
+    private       Set<ActiveStateChangeHandler>  activeStateChangeHandlerProviders;
+    private       List<ActiveStateChangeHandler> activeStateChangeHandlers;
+    private       CuratorFactory                 curatorFactory;
+    private       LeaderLatch                    leaderLatch;
+    private       String                         serverId;
 
     /**
      * Create a new instance of {@link ActiveInstanceElectorService}
@@ -75,13 +79,14 @@ public class ActiveInstanceElectorService implements Service, LeaderLatchListene
     ActiveInstanceElectorService(Configuration configuration,
                                  Set<ActiveStateChangeHandler> activeStateChangeHandlerProviders,
                                  CuratorFactory curatorFactory, ActiveInstanceState activeInstanceState,
-                                 ServiceState serviceState) {
-        this.configuration = configuration;
+                                 ServiceState serviceState, AtlasMetricsUtil metricsUtil) {
+        this.configuration                     = configuration;
         this.activeStateChangeHandlerProviders = activeStateChangeHandlerProviders;
-        this.activeStateChangeHandlers = new ArrayList<>();
-        this.curatorFactory = curatorFactory;
-        this.activeInstanceState = activeInstanceState;
-        this.serviceState = serviceState;
+        this.activeStateChangeHandlers         = new ArrayList<>();
+        this.curatorFactory                    = curatorFactory;
+        this.activeInstanceState               = activeInstanceState;
+        this.serviceState                      = serviceState;
+        this.metricsUtil                       = metricsUtil;
     }
 
     /**
@@ -92,7 +97,9 @@ public class ActiveInstanceElectorService implements Service, LeaderLatchListene
      */
     @Override
     public void start() throws AtlasException {
+        metricsUtil.onServerStart();
         if (!HAConfiguration.isHAEnabled(configuration)) {
+            metricsUtil.onServerActivation();
             LOG.info("HA is not enabled, no need to start leader election service");
             return;
         }
@@ -150,6 +157,7 @@ public class ActiveInstanceElectorService implements Service, LeaderLatchListene
             }
             activeInstanceState.update(serverId);
             serviceState.setActive();
+            metricsUtil.onServerActivation();
         } catch (Exception e) {
             LOG.error("Got exception while activating", e);
             notLeader();

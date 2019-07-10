@@ -33,7 +33,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
@@ -65,32 +64,17 @@ public class EntitySearchProcessor extends SearchProcessor {
         final Set<String>     indexAttributes = new HashSet<>();
         final Set<String>     graphAttributes = new HashSet<>();
         final Set<String>     allAttributes   = new HashSet<>();
-        final Set<String>     typeAndSubTypes;
-        final String          typeAndSubTypesQryStr;
+        final Set<String>     typeAndSubTypes       = context.getEntityTypes();
+        final String          typeAndSubTypesQryStr = context.getEntityTypesQryStr();
 
-        if (context.getSearchParameters().getIncludeSubTypes()) {
-            typeAndSubTypes       = entityType.getTypeAndAllSubTypes();
-            typeAndSubTypesQryStr = entityType.getTypeAndAllSubTypesQryStr();
-        } else {
-            typeAndSubTypes       = Collections.singleton(entityType.getTypeName());
-            typeAndSubTypesQryStr = entityType.getTypeQryStr();
-        }
-
-        final AtlasClassificationType classificationType = context.getClassificationType();
+        final AtlasClassificationType classificationType            = context.getClassificationType();
+        final Set<String>             classificationTypeAndSubTypes = context.getClassificationTypes();
         final boolean                 filterClassification;
-        final Set<String>             classificationTypeAndSubTypes;
 
         if (classificationType != null) {
             filterClassification = !context.needClassificationProcessor();
-
-            if (context.getSearchParameters().getIncludeSubClassifications()) {
-                classificationTypeAndSubTypes = classificationType.getTypeAndAllSubTypes();
-            } else {
-                classificationTypeAndSubTypes = Collections.singleton(classificationType.getTypeName());
-            }
         } else {
-            filterClassification          = false;
-            classificationTypeAndSubTypes = Collections.emptySet();
+            filterClassification = false;
         }
 
         final Predicate typeNamePredicate = SearchPredicateUtil.getINPredicateGenerator()
@@ -103,8 +87,8 @@ public class EntitySearchProcessor extends SearchProcessor {
             traitPredicate = PredicateUtils.orPredicate(SearchPredicateUtil.getNotEmptyPredicateGenerator().generatePredicate(TRAIT_NAMES_PROPERTY_KEY, null, List.class),
                                                         SearchPredicateUtil.getNotEmptyPredicateGenerator().generatePredicate(PROPAGATED_TRAIT_NAMES_PROPERTY_KEY, null, List.class));
         } else if (classificationType == MATCH_ALL_NOT_CLASSIFIED) {
-            traitPredicate = PredicateUtils.andPredicate(SearchPredicateUtil.getIsNullPredicateGenerator().generatePredicate(TRAIT_NAMES_PROPERTY_KEY, null, List.class),
-                                                         SearchPredicateUtil.getIsNullPredicateGenerator().generatePredicate(PROPAGATED_TRAIT_NAMES_PROPERTY_KEY, null, List.class));
+            traitPredicate = PredicateUtils.andPredicate(SearchPredicateUtil.getIsNullOrEmptyPredicateGenerator().generatePredicate(TRAIT_NAMES_PROPERTY_KEY, null, List.class),
+                                                         SearchPredicateUtil.getIsNullOrEmptyPredicateGenerator().generatePredicate(PROPAGATED_TRAIT_NAMES_PROPERTY_KEY, null, List.class));
         } else {
             traitPredicate = PredicateUtils.orPredicate(SearchPredicateUtil.getContainsAnyPredicateGenerator().generatePredicate(TRAIT_NAMES_PROPERTY_KEY, classificationTypeAndSubTypes, List.class),
                                                         SearchPredicateUtil.getContainsAnyPredicateGenerator().generatePredicate(PROPAGATED_TRAIT_NAMES_PROPERTY_KEY, classificationTypeAndSubTypes, List.class));

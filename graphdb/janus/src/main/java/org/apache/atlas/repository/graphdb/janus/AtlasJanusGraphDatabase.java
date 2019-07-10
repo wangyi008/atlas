@@ -83,6 +83,10 @@ public class AtlasJanusGraphDatabase implements GraphDatabase<AtlasJanusVertex, 
 
         Configuration configProperties = ApplicationProperties.get();
 
+        if (isEmbeddedSolr()) { // AtlasJanusGraphIndexClient.performRequestHandlerAction() fails for embedded-solr; disable freetext until this issue is resolved
+            configProperties.setProperty(ApplicationProperties.ENABLE_FREETEXT_SEARCH_CONF, false);
+        }
+
         configProperties.setProperty(SOLR_ZOOKEEPER_URLS, configProperties.getStringArray(SOLR_ZOOKEEPER_URL));
 
         Configuration janusConfig = ApplicationProperties.getSubsetConfiguration(configProperties, GRAPH_PREFIX);
@@ -169,6 +173,9 @@ public class AtlasJanusGraphDatabase implements GraphDatabase<AtlasJanusVertex, 
                             LOG.info("Newer client is being used with older janus storage version. Setting allow-upgrade=true and reattempting connection");
                             config.addProperty("graph.allow-upgrade", true);
                             graphInstance = JanusGraphFactory.open(config);
+                        }
+                        else {
+                            throw new RuntimeException(e);
                         }
                     }
                     atlasGraphInstance = new AtlasJanusGraph();
@@ -262,6 +269,11 @@ public class AtlasJanusGraphDatabase implements GraphDatabase<AtlasJanusVertex, 
     public AtlasGraph<AtlasJanusVertex, AtlasJanusEdge> getGraph() {
         getGraphInstance();
         return atlasGraphInstance;
+    }
+
+    @Override
+    public AtlasGraph<AtlasJanusVertex, AtlasJanusEdge> getGraphBulkLoading() {
+        return new AtlasJanusGraph(getBulkLoadingGraphInstance());
     }
 
     private static void startLocalSolr() {

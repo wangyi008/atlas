@@ -81,7 +81,9 @@ public class EntityREST {
     private static final Logger LOG      = LoggerFactory.getLogger(EntityREST.class);
     private static final Logger PERF_LOG = AtlasPerfTracer.getPerfLogger("rest.EntityREST");
 
-    public static final String PREFIX_ATTR = "attr:";
+    public static final String PREFIX_ATTR  = "attr:";
+    public static final String PREFIX_ATTR_ = "attr_";
+
 
     private final AtlasTypeRegistry      typeRegistry;
     private final AtlasEntityStore       entitiesStore;
@@ -105,7 +107,7 @@ public class EntityREST {
      */
     @GET
     @Path("/guid/{guid}")
-    public AtlasEntityWithExtInfo getById(@PathParam("guid") String guid, @QueryParam("minExtInfo") @DefaultValue("false") boolean minExtInfo) throws AtlasBaseException {
+    public AtlasEntityWithExtInfo getById(@PathParam("guid") String guid, @QueryParam("minExtInfo") @DefaultValue("false") boolean minExtInfo, @QueryParam("ignoreRelationships") @DefaultValue("false") boolean ignoreRelationships) throws AtlasBaseException {
         Servlets.validateQueryParamLength("guid", guid);
 
         AtlasPerfTracer perf = null;
@@ -115,7 +117,7 @@ public class EntityREST {
                 perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "EntityREST.getById(" + guid + ", " + minExtInfo + " )");
             }
 
-            return entitiesStore.getById(guid, minExtInfo);
+            return entitiesStore.getById(guid, minExtInfo, ignoreRelationships);
         } finally {
             AtlasPerfTracer.log(perf);
         }
@@ -159,13 +161,15 @@ public class EntityREST {
      * GET /v2/entity/uniqueAttribute/type/aType?attr:aTypeAttribute=someValue
      *
      * @param typeName
+     * @param minExtInfo
+     * @param ignoreRelationships
      * @return AtlasEntityWithExtInfo
      * @throws AtlasBaseException
      */
     @GET
     @Path("/uniqueAttribute/type/{typeName}")
     public AtlasEntityWithExtInfo getByUniqueAttributes(@PathParam("typeName") String typeName, @QueryParam("minExtInfo") @DefaultValue("false") boolean minExtInfo,
-                                                        @Context HttpServletRequest servletRequest) throws AtlasBaseException {
+                                                        @QueryParam("ignoreRelationships") @DefaultValue("false") boolean ignoreRelationships, @Context HttpServletRequest servletRequest) throws AtlasBaseException {
         Servlets.validateQueryParamLength("typeName", typeName);
 
         AtlasPerfTracer perf = null;
@@ -181,7 +185,7 @@ public class EntityREST {
 
             validateUniqueAttribute(entityType, attributes);
 
-            return entitiesStore.getByUniqueAttributes(entityType, attributes, minExtInfo);
+            return entitiesStore.getByUniqueAttributes(entityType, attributes, minExtInfo, ignoreRelationships);
         } finally {
             AtlasPerfTracer.log(perf);
         }
@@ -582,11 +586,59 @@ public class EntityREST {
     /******************************************************************/
 
     /**
+     * Bulk API to retrieve list of entities identified by its unique attributes.
+     *
+     * In addition to the typeName path parameter, attribute key-value pair(s) can be provided in the following format
+     *
+     * typeName=<typeName>&attr_1:<attrName>=<attrValue>&attr_2:<attrName>=<attrValue>&attr_3:<attrName>=<attrValue>
+     *
+     * NOTE: The attrName should be an unique attribute for the given entity-type
+     *
+     * The REST request would look something like this
+     *
+     * GET /v2/entity/bulk/uniqueAttribute/type/hive_db?attrs_0:qualifiedName=db1@cl1&attrs_2:qualifiedName=db2@cl1
+     *
+     * @param typeName
+     * @param minExtInfo
+     * @param ignoreRelationships
+     * @return AtlasEntitiesWithExtInfo
+     * @throws AtlasBaseException
+     */
+    @GET
+    @Path("/bulk/uniqueAttribute/type/{typeName}")
+    public AtlasEntitiesWithExtInfo getEntitiesByUniqueAttributes(@PathParam("typeName") String typeName,
+                                                                  @QueryParam("minExtInfo") @DefaultValue("false") boolean minExtInfo,
+                                                                  @QueryParam("ignoreRelationships") @DefaultValue("false") boolean ignoreRelationships,
+                                                                  @Context HttpServletRequest servletRequest) throws AtlasBaseException {
+        Servlets.validateQueryParamLength("typeName", typeName);
+
+        AtlasPerfTracer perf = null;
+
+        try {
+            List<Map<String, Object>> uniqAttributesList = getAttributesList(servletRequest);
+
+            if (AtlasPerfTracer.isPerfTraceEnabled(PERF_LOG)) {
+                perf = AtlasPerfTracer.getPerfTracer(PERF_LOG, "EntityREST.getEntitiesByUniqueAttributes(" + typeName + "," + uniqAttributesList + ")");
+            }
+
+            AtlasEntityType entityType = ensureEntityType(typeName);
+
+            for (Map<String, Object> uniqAttributes : uniqAttributesList) {
+                validateUniqueAttribute(entityType, uniqAttributes);
+            }
+
+            return entitiesStore.getEntitiesByUniqueAttributes(entityType, uniqAttributesList, minExtInfo, ignoreRelationships);
+        } finally {
+            AtlasPerfTracer.log(perf);
+        }
+    }
+
+    /**
      * Bulk API to retrieve list of entities identified by its GUIDs.
      */
     @GET
     @Path("/bulk")
-    public AtlasEntitiesWithExtInfo getByGuids(@QueryParam("guid") List<String> guids, @QueryParam("minExtInfo") @DefaultValue("false") boolean minExtInfo) throws AtlasBaseException {
+    public AtlasEntitiesWithExtInfo getByGuids(@QueryParam("guid") List<String> guids, @QueryParam("minExtInfo") @DefaultValue("false") boolean minExtInfo, @QueryParam("ignoreRelationships") @DefaultValue("false") boolean ignoreRelationships) throws AtlasBaseException {
         if (CollectionUtils.isNotEmpty(guids)) {
             for (String guid : guids) {
                 Servlets.validateQueryParamLength("guid", guid);
@@ -604,7 +656,7 @@ public class EntityREST {
                 throw new AtlasBaseException(AtlasErrorCode.INSTANCE_GUID_NOT_FOUND, guids);
             }
 
-            return entitiesStore.getByIds(guids, minExtInfo);
+            return entitiesStore.getByIds(guids, minExtInfo, ignoreRelationships);
         } finally {
             AtlasPerfTracer.log(perf);
         }
@@ -781,6 +833,7 @@ public class EntityREST {
         return ret;
     }
 
+    // attr:qualifiedName=db1@cl1 ==> { qualifiedName:db1@cl1 }
     private Map<String, Object> getAttributes(HttpServletRequest request) {
         Map<String, Object> attributes = new HashMap<>();
 
@@ -798,6 +851,43 @@ public class EntityREST {
         }
 
         return attributes;
+    }
+
+    // attrs_1:qualifiedName=db1@cl1&attrs_2:qualifiedName=db2@cl1 ==> [ { qualifiedName:db1@cl1 }, { qualifiedName:db2@cl1 } ]
+    private List<Map<String, Object>> getAttributesList(HttpServletRequest request) {
+        Map<String, Map<String, Object>> ret = new HashMap<>();
+
+        if (MapUtils.isNotEmpty(request.getParameterMap())) {
+            for (Map.Entry<String, String[]> entry : request.getParameterMap().entrySet()) {
+                String key = entry.getKey();
+
+                if (key == null || !key.startsWith(PREFIX_ATTR_)) {
+                    continue;
+                }
+
+                int      sepPos = key.indexOf(':', PREFIX_ATTR_.length());
+                String[] values = entry.getValue();
+                String   value  = values != null && values.length > 0 ? values[0] : null;
+
+                if (sepPos == -1 || value == null) {
+                    continue;
+                }
+
+                String              attrName   = key.substring(sepPos + 1);
+                String              listIdx    = key.substring(PREFIX_ATTR_.length(), sepPos);
+                Map<String, Object> attributes = ret.get(listIdx);
+
+                if (attributes == null) {
+                    attributes = new HashMap<>();
+
+                    ret.put(listIdx, attributes);
+                }
+
+                attributes.put(attrName, value);
+            }
+        }
+
+        return new ArrayList<>(ret.values());
     }
 
     /**

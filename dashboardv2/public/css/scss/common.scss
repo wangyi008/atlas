@@ -86,7 +86,17 @@
 
 .detail-page {
     .details-backbutton {
-        display: block !important;
+        display: table-cell !important;
+    }
+
+    .searched-term-highlight {
+        background-color: #eeee31;
+        transition: background-color 4s, font-weight 2s;
+
+        &.bold {
+            background-color: transparent;
+            font-weight: bold;
+        }
     }
 }
 
